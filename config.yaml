@@ -1,0 +1,6 @@
+server:
+  port: 2500
+  token: "secret-token"
+executor:
+  pool: 5
+  extra_cpu_time: 0.5
