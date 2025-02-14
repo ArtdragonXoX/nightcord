@@ -1,0 +1,49 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Windows",
+            "type": "shell",
+            "command": "go build -o build/windows/amd64/nightcord-server.exe",
+            "options": {
+                "env": {
+                    "CGO_ENABLED": "0",
+                    "GOOS": "windows",
+                    "GOARCH": "amd64"
+                }
+            }
+        },
+        {
+            "label": "Build Linux",
+            "type": "shell",
+            "command": "go build -o build/Linux/amd64/nightcord-server",
+            "options": {
+                "env": {
+                    "CGO_ENABLED": "0",
+                    "GOOS": "linux",
+                    "GOARCH": "amd64"
+                }
+            }
+        },
+        {
+            "label": "Build Mac",
+            "type": "shell",
+            "command": "go build -o build/Mac/amd64/nightcord-server",
+            "options": {
+                "env": {
+                    "CGO_ENABLED": "0",
+                    "GOOS": "darwin",
+                    "GOARCH": "amd64"
+                }
+            }
+        },
+        {
+            "label": "Build All Platforms",
+            "dependsOn": [
+                "Build Windows",
+                "Build Linux",
+                "Build Mac"
+            ]
+        }
+    ],
+}
