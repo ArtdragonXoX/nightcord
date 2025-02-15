@@ -19,13 +19,10 @@ type SubmitRequest struct {
 // Result 为评测结果返回格式
 type Result struct {
 	Stdout        string  `json:"stdout"`
-	Time          string  `json:"time"`
+	Time          float64 `json:"time"`
 	Memory        int     `json:"memory"`
 	Stderr        *string `json:"stderr"`
 	CompileOutput *string `json:"compile_output"`
 	Message       *string `json:"message"`
-	Status        struct {
-		Id          int    `json:"id"`
-		Description string `json:"description"`
-	} `json:"status"`
+	Status        Status  `json:"status"`
 }
