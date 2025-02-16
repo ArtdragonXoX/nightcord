@@ -21,8 +21,8 @@ type Result struct {
 	Stdout        string  `json:"stdout"`
 	Time          float64 `json:"time"`
 	Memory        int     `json:"memory"`
-	Stderr        *string `json:"stderr"`
-	CompileOutput *string `json:"compile_output"`
-	Message       *string `json:"message"`
+	Stderr        string  `json:"stderr"`
+	CompileOutput string  `json:"compile_output"`
+	Message       string  `json:"message"`
 	Status        Status  `json:"status"`
 }
