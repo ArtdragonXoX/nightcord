@@ -2,9 +2,21 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Build Linux",
+            "label": "Build Linux From Docker",
             "type": "shell",
             "command": "docker build --target export --output type=local,dest=./build .",
+        },
+        {
+            "label": "Build Linux In Docker",
+            "type": "shell",
+            "command": "go build -o build/nightcord main.go",
+            "options": {
+                "env": {
+                    "CGO_ENABLED": "1",
+                    "GOOS": "linux",
+                    "GOARCH": "amd64"
+                }
+            }
         }
     ],
 }
