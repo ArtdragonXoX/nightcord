@@ -55,7 +55,7 @@ func processJob(req model.SubmitRequest) model.Result {
 	if !found {
 		res.Status = model.StatusIE.GetStatus()
 		msg := "language not found"
-		res.Message = &msg
+		res.Message = msg
 		return res
 	}
 
@@ -64,7 +64,7 @@ func processJob(req model.SubmitRequest) model.Result {
 	if err := os.Mkdir(folderName, 0755); err != nil {
 		res.Status = model.StatusIE.GetStatus()
 		msg := err.Error()
-		res.Message = &msg
+		res.Message = msg
 		return res
 	}
 	// 评测结束后删除临时文件夹
@@ -75,7 +75,7 @@ func processJob(req model.SubmitRequest) model.Result {
 	if err := os.WriteFile(sourceFilePath, []byte(req.SourceCode), 0644); err != nil {
 		res.Status = model.StatusIE.GetStatus()
 		msg := err.Error()
-		res.Message = &msg
+		res.Message = msg
 		return res
 	}
 
@@ -88,10 +88,10 @@ func processJob(req model.SubmitRequest) model.Result {
 		compileOutput, err := compileCmd.CombinedOutput()
 		if err != nil {
 			outputStr := string(compileOutput)
-			res.CompileOutput = &outputStr
+			res.CompileOutput = outputStr
 			res.Status = model.StatusCE.GetStatus()
 			msg := err.Error()
-			res.Message = &msg
+			res.Message = msg
 			return res
 		}
 	}
@@ -113,21 +113,21 @@ func processJob(req model.SubmitRequest) model.Result {
 	if err != nil {
 		res.Status = model.StatusIE.GetStatus()
 		msg := err.Error()
-		res.Message = &msg
+		res.Message = msg
 		return res
 	}
 	stderrPipe, err := runCmd.StderrPipe()
 	if err != nil {
 		res.Status = model.StatusIE.GetStatus()
 		msg := err.Error()
-		res.Message = &msg
+		res.Message = msg
 		return res
 	}
 
 	if err := runCmd.Start(); err != nil {
 		res.Status = model.StatusIE.GetStatus()
 		msg := err.Error()
-		res.Message = &msg
+		res.Message = msg
 		return res
 	}
 
@@ -143,22 +143,22 @@ func processJob(req model.SubmitRequest) model.Result {
 				case syscall.SIGSEGV:
 					res.Status = model.StatusRESIGSEGV.GetStatus()
 					msg := "内存段错误"
-					res.Stderr = &msg
+					res.Stderr = msg
 					return res
 				case syscall.SIGXFSZ:
 					res.Status = model.StatusRESIGXFSZ.GetStatus()
 					msg := "文件大小限制超出"
-					res.Stderr = &msg
+					res.Stderr = msg
 					return res
 				case syscall.SIGFPE:
 					res.Status = model.StatusRESIGFPE.GetStatus()
 					msg := "算术运算错误"
-					res.Stderr = &msg
+					res.Stderr = msg
 					return res
 				case syscall.SIGABRT:
 					res.Status = model.StatusRESIGABRT.GetStatus()
 					msg := "程序异常终止"
-					res.Stderr = &msg
+					res.Stderr = msg
 					return res
 				}
 			}
@@ -171,7 +171,7 @@ func processJob(req model.SubmitRequest) model.Result {
 	} else if err != nil {
 		res.Status = model.StatusRE.GetStatus()
 		msg := err.Error()
-		res.Stderr = &msg
+		res.Stderr = msg
 	} else {
 		res.Status = model.StatusAC.GetStatus()
 	}
@@ -195,18 +195,18 @@ func processJob(req model.SubmitRequest) model.Result {
 		stderrStr = regex.ReplaceAllString(stderrStr, "")
 		stderrStr = strings.TrimSpace(stderrStr)
 		if stderrStr == "" {
-			res.Stderr = nil
+			res.Stderr = ""
 		} else {
-			res.Stderr = &stderrStr
+			res.Stderr = stderrStr
 		}
 	} else {
 		// 如果未提取到信息，则用超时时间作为近似值
 		res.Time = timeoutDuration.Seconds()
 		res.Memory = 0
 		if stderrStr == "" {
-			res.Stderr = nil
+			res.Stderr = ""
 		} else {
-			res.Stderr = &stderrStr
+			res.Stderr = stderrStr
 		}
 	}
 
