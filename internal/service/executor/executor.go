@@ -97,7 +97,7 @@ func processJob(req model.SubmitRequest) model.Result {
 	}
 
 	// 构建运行命令，设置内存限制（ulimit -v）和通过/usr/bin/time获取CPU时间及内存数据
-	runCmdStr := fmt.Sprintf("ulimit -v %d; %s", req.MemoryLimit, lang.RunCmd)
+	runCmdStr := fmt.Sprintf("ulimit -v %d; /usr/bin/time -f '__TIME__:%%S S,__MEM__:%%M KB' %s", req.MemoryLimit, lang.RunCmd)
 	timeoutDuration := time.Duration((req.CpuTimeLimit + conf.Conf.Executor.ExtraCPUTime) * float64(time.Second))
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
 	defer cancel()
@@ -178,7 +178,7 @@ func processJob(req model.SubmitRequest) model.Result {
 
 	// 从stderr中提取CPU时间和内存信息（使用正则）
 	stderrStr := string(stderrBytes)
-	regex := regexp.MustCompile(`__TIME__:(?P<time>\d+:\d{2}\.\d{2}) S,__MEM__:(?P<memory>\d+) KB`)
+	regex := regexp.MustCompile(`__TIME__:(?P<time>\d+\.\d{2}) S,__MEM__:(?P<memory>\d+) KB`)
 	matches := regex.FindStringSubmatch(stderrStr)
 	if len(matches) >= 3 {
 		timeParts := strings.Split(matches[1], ":")
