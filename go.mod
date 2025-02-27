@@ -5,7 +5,6 @@ go 1.23.3
 require (
 	github.com/gin-gonic/gin v1.10.0
 	golang.org/x/exp v0.0.0-20250210185358-939b2ce775ac
-	gopkg.in/yaml.v2 v2.4.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

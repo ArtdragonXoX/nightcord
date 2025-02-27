@@ -10,6 +10,14 @@
             "request": "launch",
             "mode": "debug",
             "program": "main.go"
+        },
+        {
+            "name": "Run Docker Container",
+            "type": "shell",
+            "request": "launch",
+            "preLaunchTask": "docker-run",
+            "mode": "auto",
+            "program": "${file}"
         }
     ]
 }
