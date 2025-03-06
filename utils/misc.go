@@ -5,7 +5,7 @@ import (
 	"os"
 	"unsafe"
 
-	"golang.org/x/exp/rand"
+	"math/rand/v2"
 )
 
 var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
@@ -22,7 +22,7 @@ func PrettyStruct(data interface{}) (string, error) {
 func RandomString(n int) string {
 	b := make([]rune, n)
 	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+		b[i] = letters[rand.IntN(len(letters))]
 	}
 	return string(b)
 }
