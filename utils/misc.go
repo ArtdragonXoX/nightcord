@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"os"
+	"unsafe"
 
 	"golang.org/x/exp/rand"
 )
@@ -35,4 +36,11 @@ func IsFileExists(filePath string) (bool, error) {
 		return false, err // 其他错误，返回false和错误
 	}
 	return true, nil // 文件存在，返回true和nil的error
+}
+
+func IsLittleEndian() bool {
+	var value int32 = 1 // 占4byte 转换成16进制 0x00 00 00 01
+	pointer := unsafe.Pointer(&value)
+	pb := (*byte)(pointer)
+	return *pb == 1
 }
