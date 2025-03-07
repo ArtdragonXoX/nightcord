@@ -15,8 +15,10 @@ func TestExecutor(t *testing.T) {
 	if err != nil {
 		t.Errorf("GetBPF error:%v", err)
 	}
+	// e.Dir = utils.RandomString(6)
 	e.Filter = Bpf
 	e.Limiter.CpuTime = 1
+	e.Limiter.Memory = 1
 	e.RunCmdStr = "echo hello"
 	err = e.Start()
 	if err != nil {
@@ -29,6 +31,6 @@ func TestExecutor(t *testing.T) {
 	if err != nil {
 		t.Errorf("e wait fail:%v", err)
 	} else {
-		t.Logf("e wait %v", e.Result.Stdout)
+		t.Logf("e wait %+v", e.Result)
 	}
 }

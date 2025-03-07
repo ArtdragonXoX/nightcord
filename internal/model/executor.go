@@ -67,6 +67,8 @@ type Executor struct {
 }
 
 func (e *Executor) Start() error {
+	var err error
+
 	timeoutDuration := time.Duration(e.Limiter.CpuTime * float64(time.Second))
 	var ctx context.Context
 	ctx, e.cancel = context.WithTimeout(context.Background(), timeoutDuration)
@@ -116,6 +118,11 @@ func (e *Executor) Wait() error {
 
 	e.Result.Stderr = string(e.stderrBytes)
 	e.Result.Stdout = string(e.stdoutBytes)
+	rusage := e.Cmd.ProcessState.SysUsage().(*syscall.Rusage)
+	e.Result.ExitCode = e.Cmd.ProcessState.ExitCode()
+	e.Result.Time = float64(rusage.Stime.Nano()+rusage.Utime.Nano()) / 1e9
+	e.Result.Memory = uint(rusage.Maxrss)
+
 	return nil
 }
 
