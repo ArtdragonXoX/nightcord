@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-func Init() {
+func init() {
 	languages = LoadLanguages()
 }
 
