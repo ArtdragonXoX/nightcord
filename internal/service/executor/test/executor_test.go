@@ -34,9 +34,10 @@ func TestExecutor(t *testing.T) {
 			CpuTime: 1,
 			Memory:  102400,
 		},
-		Stdin:  inR,
-		Stdout: outW,
-		Stderr: errW,
+		Stdin:   inR,
+		Stdout:  outW,
+		Stderr:  errW,
+		RunFlag: true,
 	}
 	inW.Write([]byte("5 2\n"))
 	var wg sync.WaitGroup
