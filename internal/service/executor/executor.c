@@ -2,31 +2,74 @@
 
 void setupSeccomp()
 {
-    scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_KILL);
+    scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
     if (!ctx)
     {
         perror("seccomp_init failed");
         exit(2);
     }
 
-    // 定义允许的系统调用
-    int allowCalls[] = {
-        SCMP_SYS(read),  // 标准输入
-        SCMP_SYS(write), // 标准输出/错误
-        SCMP_SYS(exit),  //
-        SCMP_SYS(exit_group),
-        SCMP_SYS(brk), // 内存管理
-        SCMP_SYS(mmap),
-        SCMP_SYS(munmap),
-        SCMP_SYS(fstat),
-        SCMP_SYS(arch_prctl), // 部分语言需要（如Rust）
-        SCMP_SYS(clock_gettime),
-        SCMP_SYS(rt_sigreturn),
+    // 定义不允许的系统调用
+    int killCalls[] = {
+        SCMP_SYS(kill),
+        SCMP_SYS(tgkill),
+        // SCMP_SYS(execve),
+        SCMP_SYS(execveat),
+        SCMP_SYS(clone),
+        SCMP_SYS(fork),
+        SCMP_SYS(vfork),
+        SCMP_SYS(open),
+        // SCMP_SYS(openat),
+        SCMP_SYS(openat2),
+        SCMP_SYS(creat),
+        SCMP_SYS(unlink),
+        SCMP_SYS(unlinkat),
+        SCMP_SYS(rename),
+        SCMP_SYS(renameat),
+        SCMP_SYS(mkdir),
+        SCMP_SYS(rmdir),
+        SCMP_SYS(chmod),
+        SCMP_SYS(fchmod),
+        SCMP_SYS(fchmodat),
+        SCMP_SYS(chown),
+        SCMP_SYS(fchown),
+        SCMP_SYS(socket),
+        SCMP_SYS(socketpair),
+        SCMP_SYS(bind),
+        SCMP_SYS(connect),
+        SCMP_SYS(listen),
+        SCMP_SYS(accept),
+        SCMP_SYS(accept4),
+        SCMP_SYS(getsockname),
+        SCMP_SYS(getsockopt),
+        SCMP_SYS(setsockopt),
+        SCMP_SYS(sendto),
+        SCMP_SYS(recvfrom),
+        SCMP_SYS(sendmsg),
+        SCMP_SYS(recvmsg),
+        SCMP_SYS(ptrace),
+        SCMP_SYS(mount),
+        SCMP_SYS(umount),
+        SCMP_SYS(umount2),
+        SCMP_SYS(pivot_root),
+        SCMP_SYS(chroot),
+        SCMP_SYS(syslog),
+        SCMP_SYS(kexec_load),
+        SCMP_SYS(iopl),
+        SCMP_SYS(ioperm),
+        SCMP_SYS(shmget),
+        SCMP_SYS(shmat),
+        SCMP_SYS(shmdt),
+        SCMP_SYS(msgget),
+        SCMP_SYS(msgsnd),
+        SCMP_SYS(msgrcv),
+        SCMP_SYS(semget),
+        SCMP_SYS(semop),
     };
 
-    for (int i = 0; i < sizeof(allowCalls) / sizeof(allowCalls[0]); i++)
+    for (int i = 0; i < sizeof(killCalls) / sizeof(killCalls[0]); i++)
     {
-        if (seccomp_rule_add(ctx, SCMP_ACT_ALLOW, allowCalls[i], 0) != 0)
+        if (seccomp_rule_add(ctx, SCMP_ACT_KILL, killCalls[i], 0) != 0)
         {
             perror("seccomp_rule_add failed");
             exit(2);
@@ -95,9 +138,9 @@ int childProcess(Executor *executor)
     }
     close(executor->StdoutFd);
 
-    setupSeccomp();
     setLimits(&executor->Limit);
-    execl("/bin/sh", "sh", "-c", executor->Command, NULL);
+    setupSeccomp();
+    execl(executor->Command, NULL);
     perror("execl fail");
     _exit(2);
 }
