@@ -80,7 +80,7 @@ int childProcess(Executor *executor)
     close(executor->StdoutFd);
 
     setLimits(&executor->Limit);
-    setupSeccomp(runSeccompFilter);
+    setupSeccomp(executor->RunFlag ? runSeccompFilter : compileSeccompFilter);
     execl(executor->Command, NULL);
     perror("execl fail");
     _exit(2);

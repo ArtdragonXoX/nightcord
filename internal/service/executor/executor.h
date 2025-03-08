@@ -33,6 +33,7 @@ typedef struct
     int StdinFd;
     int StdoutFd;
     int StderrFd;
+    int RunFlag;
 } Executor;
 
 int Execute(Executor *executor);
