@@ -65,6 +65,8 @@ void setupSeccomp()
         SCMP_SYS(msgrcv),
         SCMP_SYS(semget),
         SCMP_SYS(semop),
+        SCMP_SYS(nanosleep),       // 禁止 nanosleep
+        SCMP_SYS(clock_nanosleep), // 禁止 clock_nanosleep
     };
 
     for (int i = 0; i < sizeof(killCalls) / sizeof(killCalls[0]); i++)
@@ -101,6 +103,20 @@ void setLimits(Limiter *limiter)
     if (setrlimit(RLIMIT_AS, &mem_limit) == -1)
     {
         perror("setrlimit(RLIMIT_AS)");
+        exit(2);
+    }
+
+    struct rlimit nofile_limit = {1024, 1024}; // 最大文件描述符数
+    if (setrlimit(RLIMIT_NOFILE, &nofile_limit) == -1)
+    {
+        perror("setrlimit(RLIMIT_NOFILE)");
+        exit(2);
+    }
+
+    struct rlimit core_limit = {0, 0}; // 禁用核心转储
+    if (setrlimit(RLIMIT_CORE, &core_limit) == -1)
+    {
+        perror("setrlimit(RLIMIT_CORE)");
         exit(2);
     }
 }
