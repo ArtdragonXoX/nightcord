@@ -28,7 +28,7 @@ func TestExecutor(t *testing.T) {
 	}
 	defer errR.Close()
 	e := model.Executor{
-		Command: "test",
+		Command: "test_a+b",
 		Dir:     ".",
 		Limiter: model.Limiter{
 			CpuTime: 1,
@@ -38,6 +38,7 @@ func TestExecutor(t *testing.T) {
 		Stdout: outW,
 		Stderr: errW,
 	}
+	inW.Write([]byte("5 2\n"))
 	var wg sync.WaitGroup
 	wg.Add(2)
 
