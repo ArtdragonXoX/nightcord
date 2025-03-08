@@ -37,4 +37,6 @@ typedef struct
 
 int Execute(Executor *executor);
 
+void InitFilter();
+
 #endif

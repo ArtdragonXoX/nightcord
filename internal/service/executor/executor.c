@@ -1,91 +1,16 @@
 #include "executor.h"
 
-void setupSeccomp()
+scmp_filter_ctx runSeccompFilter;
+scmp_filter_ctx compileSeccompFilter;
+
+void setupSeccomp(scmp_filter_ctx ctx)
 {
-    scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
-    if (!ctx)
-    {
-        perror("seccomp_init failed");
-        exit(2);
-    }
-
-    // 定义不允许的系统调用
-    int killCalls[] = {
-        SCMP_SYS(kill),
-        SCMP_SYS(tgkill),
-        // SCMP_SYS(execve),
-        SCMP_SYS(execveat),
-        SCMP_SYS(clone),
-        SCMP_SYS(fork),
-        SCMP_SYS(vfork),
-        SCMP_SYS(open),
-        // SCMP_SYS(openat),
-        SCMP_SYS(openat2),
-        SCMP_SYS(creat),
-        SCMP_SYS(unlink),
-        SCMP_SYS(unlinkat),
-        SCMP_SYS(rename),
-        SCMP_SYS(renameat),
-        SCMP_SYS(mkdir),
-        SCMP_SYS(rmdir),
-        SCMP_SYS(chmod),
-        SCMP_SYS(fchmod),
-        SCMP_SYS(fchmodat),
-        SCMP_SYS(chown),
-        SCMP_SYS(fchown),
-        SCMP_SYS(socket),
-        SCMP_SYS(socketpair),
-        SCMP_SYS(bind),
-        SCMP_SYS(connect),
-        SCMP_SYS(listen),
-        SCMP_SYS(accept),
-        SCMP_SYS(accept4),
-        SCMP_SYS(getsockname),
-        SCMP_SYS(getsockopt),
-        SCMP_SYS(setsockopt),
-        SCMP_SYS(sendto),
-        SCMP_SYS(recvfrom),
-        SCMP_SYS(sendmsg),
-        SCMP_SYS(recvmsg),
-        SCMP_SYS(ptrace),
-        SCMP_SYS(mount),
-        SCMP_SYS(umount),
-        SCMP_SYS(umount2),
-        SCMP_SYS(pivot_root),
-        SCMP_SYS(chroot),
-        SCMP_SYS(syslog),
-        SCMP_SYS(kexec_load),
-        SCMP_SYS(iopl),
-        SCMP_SYS(ioperm),
-        SCMP_SYS(shmget),
-        SCMP_SYS(shmat),
-        SCMP_SYS(shmdt),
-        SCMP_SYS(msgget),
-        SCMP_SYS(msgsnd),
-        SCMP_SYS(msgrcv),
-        SCMP_SYS(semget),
-        SCMP_SYS(semop),
-        SCMP_SYS(nanosleep),       // 禁止 nanosleep
-        SCMP_SYS(clock_nanosleep), // 禁止 clock_nanosleep
-    };
-
-    for (int i = 0; i < sizeof(killCalls) / sizeof(killCalls[0]); i++)
-    {
-        if (seccomp_rule_add(ctx, SCMP_ACT_KILL, killCalls[i], 0) != 0)
-        {
-            perror("seccomp_rule_add failed");
-            exit(2);
-        }
-    }
-
     // 加载seccomp过滤器
     if (seccomp_load(ctx) != 0)
     {
         perror("seccomp_load failed");
         exit(2);
     }
-
-    seccomp_release(ctx);
 }
 
 void setLimits(Limiter *limiter)
@@ -155,7 +80,7 @@ int childProcess(Executor *executor)
     close(executor->StdoutFd);
 
     setLimits(&executor->Limit);
-    setupSeccomp();
+    setupSeccomp(runSeccompFilter);
     execl(executor->Command, NULL);
     perror("execl fail");
     _exit(2);
@@ -189,4 +114,165 @@ int Execute(Executor *executor)
         return 1;
     }
     return EXIT_SUCCESS;
+}
+
+scmp_filter_ctx getRunSeccompFilter()
+{
+    scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
+    if (!ctx)
+    {
+        perror("seccomp_init failed");
+        exit(2);
+    }
+    int killCalls[] = {
+        SCMP_SYS(kill),
+        SCMP_SYS(tgkill),
+        // SCMP_SYS(execve),
+        SCMP_SYS(execveat),
+        SCMP_SYS(clone),
+        SCMP_SYS(fork),
+        SCMP_SYS(vfork),
+        SCMP_SYS(open),
+        // SCMP_SYS(openat),
+        SCMP_SYS(openat2),
+        SCMP_SYS(creat),
+        SCMP_SYS(unlink),
+        SCMP_SYS(unlinkat),
+        SCMP_SYS(rename),
+        SCMP_SYS(renameat),
+        SCMP_SYS(mkdir),
+        SCMP_SYS(rmdir),
+        SCMP_SYS(chmod),
+        SCMP_SYS(fchmod),
+        SCMP_SYS(fchmodat),
+        SCMP_SYS(chown),
+        SCMP_SYS(fchown),
+        SCMP_SYS(socket),
+        SCMP_SYS(socketpair),
+        SCMP_SYS(bind),
+        SCMP_SYS(connect),
+        SCMP_SYS(listen),
+        SCMP_SYS(accept),
+        SCMP_SYS(accept4),
+        SCMP_SYS(getsockname),
+        SCMP_SYS(getsockopt),
+        SCMP_SYS(setsockopt),
+        SCMP_SYS(sendto),
+        SCMP_SYS(recvfrom),
+        SCMP_SYS(sendmsg),
+        SCMP_SYS(recvmsg),
+        SCMP_SYS(ptrace),
+        SCMP_SYS(mount),
+        SCMP_SYS(umount),
+        SCMP_SYS(umount2),
+        SCMP_SYS(pivot_root),
+        SCMP_SYS(chroot),
+        SCMP_SYS(syslog),
+        SCMP_SYS(kexec_load),
+        SCMP_SYS(iopl),
+        SCMP_SYS(ioperm),
+        SCMP_SYS(shmget),
+        SCMP_SYS(shmat),
+        SCMP_SYS(shmdt),
+        SCMP_SYS(msgget),
+        SCMP_SYS(msgsnd),
+        SCMP_SYS(msgrcv),
+        SCMP_SYS(semget),
+        SCMP_SYS(semop),
+        SCMP_SYS(nanosleep),       // 禁止 nanosleep
+        SCMP_SYS(clock_nanosleep), // 禁止 clock_nanosleep
+    };
+    for (int i = 0; i < sizeof(killCalls) / sizeof(killCalls[0]); i++)
+    {
+        if (seccomp_rule_add(ctx, SCMP_ACT_KILL, killCalls[i], 0) != 0)
+        {
+            perror("seccomp_rule_add failed");
+            exit(2);
+        }
+    }
+    return ctx;
+}
+
+scmp_filter_ctx getCompileSeccompFilter()
+{
+    scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
+    if (!ctx)
+    {
+        perror("seccomp_init failed");
+        exit(2);
+    }
+    int killCalls[] = {
+        SCMP_SYS(kill),
+        SCMP_SYS(tgkill),
+        // SCMP_SYS(execve),
+        SCMP_SYS(execveat),
+        SCMP_SYS(clone),
+        SCMP_SYS(fork),
+        SCMP_SYS(vfork),
+        SCMP_SYS(open),
+        // SCMP_SYS(openat),
+        SCMP_SYS(openat2),
+        SCMP_SYS(creat),
+        SCMP_SYS(unlink),
+        SCMP_SYS(unlinkat),
+        SCMP_SYS(rename),
+        SCMP_SYS(renameat),
+        SCMP_SYS(mkdir),
+        SCMP_SYS(rmdir),
+        SCMP_SYS(chmod),
+        SCMP_SYS(fchmod),
+        SCMP_SYS(fchmodat),
+        SCMP_SYS(chown),
+        SCMP_SYS(fchown),
+        SCMP_SYS(socket),
+        SCMP_SYS(socketpair),
+        SCMP_SYS(bind),
+        SCMP_SYS(connect),
+        SCMP_SYS(listen),
+        SCMP_SYS(accept),
+        SCMP_SYS(accept4),
+        SCMP_SYS(getsockname),
+        SCMP_SYS(getsockopt),
+        SCMP_SYS(setsockopt),
+        SCMP_SYS(sendto),
+        SCMP_SYS(recvfrom),
+        SCMP_SYS(sendmsg),
+        SCMP_SYS(recvmsg),
+        SCMP_SYS(ptrace),
+        SCMP_SYS(mount),
+        SCMP_SYS(umount),
+        SCMP_SYS(umount2),
+        SCMP_SYS(pivot_root),
+        SCMP_SYS(chroot),
+        SCMP_SYS(syslog),
+        SCMP_SYS(kexec_load),
+        SCMP_SYS(iopl),
+        SCMP_SYS(ioperm),
+        SCMP_SYS(shmget),
+        SCMP_SYS(shmat),
+        SCMP_SYS(shmdt),
+        SCMP_SYS(msgget),
+        SCMP_SYS(msgsnd),
+        SCMP_SYS(msgrcv),
+        SCMP_SYS(semget),
+        SCMP_SYS(semop),
+        SCMP_SYS(nanosleep),       // 禁止 nanosleep
+        SCMP_SYS(clock_nanosleep), // 禁止 clock_nanosleep
+    };
+    for (int i = 0; i < sizeof(killCalls) / sizeof(killCalls[0]); i++)
+    {
+        if (seccomp_rule_add(ctx, SCMP_ACT_KILL, killCalls[i], 0) != 0)
+        {
+            perror("seccomp_rule_add failed");
+            exit(2);
+        }
+    }
+    return ctx;
+}
+
+void InitFilter()
+{
+    runSeccompFilter = getRunSeccompFilter();
+    compileSeccompFilter = getCompileSeccompFilter();
+    return;
 }
