@@ -4,3 +4,5 @@ server:
 executor:
   pool: 5
   extra_cpu_time: 0.5
+  compile_timeout: 10
+  compile_memory: 256
