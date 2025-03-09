@@ -114,6 +114,9 @@ int Execute(Executor *executor)
         executor->Result.Signal = WTERMSIG(status);
         executor->Result.Time = usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1000000.0;
         executor->Result.Memory = usage.ru_maxrss;
+        close(executor->StdinFd);
+        close(executor->StdoutFd);
+        close(executor->StderrFd);
     }
     else
     {
