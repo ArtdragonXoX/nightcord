@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <seccomp.h>
 #include <sys/syscall.h>
+#include <sys/prctl.h>
 
 typedef struct
 {
