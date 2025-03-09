@@ -4,6 +4,7 @@
 package model
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
@@ -17,27 +18,33 @@ type Job struct {
 // SubmitRequest 表示提交评测时的请求体
 type SubmitRequest struct {
 	SourceCode     string  `json:"source_code"`
-	LanguageID     int     `json:"language_id"`
 	Stdin          string  `json:"stdin"`
 	ExpectedOutput string  `json:"expected_output"`
 	CpuTimeLimit   float64 `json:"cpu_time_limit"`
 	MemoryLimit    uint    `json:"memory_limit"`
+	LanguageID     int     `json:"language_id"`
 }
 
 // Result 为评测结果返回格式
 type Result struct {
 	Stdout        string  `json:"stdout"`
-	Time          float64 `json:"time"`
-	Memory        uint    `json:"memory"`
 	Stderr        string  `json:"stderr"`
 	CompileOutput string  `json:"compile_output"`
 	Message       string  `json:"message"`
 	Status        Status  `json:"status"`
+	Time          float64 `json:"time"`
+	Memory        uint    `json:"memory"`
 }
 
 type Limiter struct {
 	CpuTime float64
 	Memory  uint
+}
+
+type ExecutorPipe struct {
+	In  *Pipe
+	Out *Pipe
+	Err *Pipe
 }
 
 type ExecutorResult struct {
@@ -55,4 +62,42 @@ type Executor struct {
 	Stdout  *os.File
 	Stderr  *os.File
 	RunFlag bool
+}
+
+func (p *ExecutorPipe) Close() error {
+	var err error
+	if terr := p.In.Close(); terr != nil {
+		err = errors.Join(err, terr)
+	}
+	if terr := p.Out.Close(); terr != nil {
+		err = errors.Join(err, terr)
+	}
+	if terr := p.Err.Close(); terr != nil {
+		err = errors.Join(err, terr)
+	}
+	return err
+}
+
+func NewExecutorPipe() (*ExecutorPipe, error) {
+	var err error
+	in, err := NewPipe()
+	if err != nil {
+		defer in.Close()
+		return nil, err
+	}
+	out, err := NewPipe()
+	if err != nil {
+		defer out.Close()
+		return nil, err
+	}
+	errPipe, err := NewPipe()
+	if err != nil {
+		defer errPipe.Close()
+		return nil, err
+	}
+	return &ExecutorPipe{
+		In:  in,
+		Out: out,
+		Err: errPipe,
+	}, nil
 }
