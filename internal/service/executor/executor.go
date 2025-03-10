@@ -94,8 +94,8 @@ func ProcessJob(req model.SubmitRequest) (res model.Result) {
 
 	runExe := GetRunExecutor(lang.RunCmd,
 		model.Limiter{
-			CpuTime: conf.Conf.Executor.CPUTimeLimit,
-			Memory:  conf.Conf.Executor.MemoryLimit,
+			CpuTime: req.CpuTimeLimit,
+			Memory:  req.MemoryLimit,
 		},
 		folderName)
 	res = runExe(req.Stdin, req.ExpectedOutput)
