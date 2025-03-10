@@ -65,6 +65,13 @@ func ProcessJob(req model.SubmitRequest) (res model.Result) {
 
 	var folderName string
 	folderName = utils.RandomString(6)
+	err = utils.EnsureDir("tem")
+	if err != nil {
+		res.Status = model.StatusIE.GetStatus()
+		res.Message = err.Error()
+		return
+	}
+	folderName = fmt.Sprintf("%s/%s", "tem", folderName)
 	err = os.Mkdir(folderName, 0755)
 	if err != nil {
 		res.Status = model.StatusIE.GetStatus()
@@ -133,7 +140,7 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdi
 			res.Message = fmt.Sprintf("write stdin pipe failed: %v", err.Error())
 			return
 		}
-		defer exePipe.In.Writer.Close()
+		exePipe.In.Writer.Close()
 		var stdout, stderr string
 		var wg sync.WaitGroup
 		var ch = make(chan bool)
