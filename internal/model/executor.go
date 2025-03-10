@@ -18,10 +18,10 @@ type Job struct {
 // SubmitRequest 表示提交评测时的请求体
 type SubmitRequest struct {
 	SourceCode     string  `json:"source_code"`
-	Stdin          string  `json:"stdin"`
-	ExpectedOutput string  `json:"expected_output"`
-	CpuTimeLimit   float64 `json:"cpu_time_limit"`
-	MemoryLimit    uint    `json:"memory_limit"`
+	Stdin          string  `json:"stdin,omitempty"`
+	ExpectedOutput string  `json:"expected_output,omitempty"`
+	CpuTimeLimit   float64 `json:"cpu_time_limit,omitempty"`
+	MemoryLimit    uint    `json:"memory_limit,omitempty"`
 	LanguageID     int     `json:"language_id"`
 }
 
