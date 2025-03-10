@@ -5,6 +5,6 @@ executor:
   pool: 5
   extra_cpu_time: 0.5
   compile_timeout: 10
-  compile_memory: 256
+  compile_memory: 262144
   cpu_time_limit: 5
-  memory_limit: 256
+  memory_limit: 262144
