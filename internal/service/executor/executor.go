@@ -63,12 +63,14 @@ func ProcessJob(req model.SubmitRequest) (res model.Result) {
 		return
 	}
 
+	folderLock.Lock()
 	var folderName string
-	folderName = utils.RandomString(6)
+	folderName = random.String(6)
 	err = utils.EnsureDir("tem")
 	if err != nil {
 		res.Status = model.StatusIE.GetStatus()
 		res.Message = err.Error()
+		folderLock.Unlock()
 		return
 	}
 	folderName = fmt.Sprintf("%s/%s", "tem", folderName)
@@ -76,9 +78,11 @@ func ProcessJob(req model.SubmitRequest) (res model.Result) {
 	if err != nil {
 		res.Status = model.StatusIE.GetStatus()
 		res.Message = err.Error()
+		folderLock.Unlock()
 		return
 	}
 	defer os.RemoveAll(folderName)
+	folderLock.Unlock()
 
 	// 将源代码写入文件
 	sourceFilePath := filepath.Join(folderName, lang.SourceFile)
