@@ -19,7 +19,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -145,51 +144,31 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdi
 			return
 		}
 		exePipe.In.Writer.Close()
-		var stdout, stderr string
-		var wg sync.WaitGroup
-		var ch = make(chan bool)
-		wg.Add(2)
-
-		// 异步读取标准输出
-		go func() {
-			defer wg.Done()
-			stdout, err = exePipe.Out.Read()
-			if err != nil {
-				res.Status = model.StatusIE.GetStatus()
-				res.Message = fmt.Sprintf("read stdout pipe failed: %v", err.Error())
-				return
-			}
-		}()
-
-		// 异步读取标准错误
-		go func() {
-			defer wg.Done()
-			stderr, err = exePipe.Err.Read()
-			if err != nil {
-				res.Status = model.StatusIE.GetStatus()
-				res.Message = fmt.Sprintf("read stderr pipe failed: %v", err.Error())
-			}
-		}()
 
 		var exeRes model.ExecutorResult
-
-		go func() {
-			exeRes, err = ProcessExecutor(runExe)
-			if err != nil {
-				res.Status = model.StatusIE.GetStatus()
-				res.Message = fmt.Sprintf("run executor failed: %v", err.Error())
-				return
-			}
-
-			wg.Wait()
-			ch <- false
-		}()
-		select {
-		case <-time.After(time.Duration(runExe.Limiter.CpuTime+conf.Conf.Executor.ExtraCPUTime) * time.Second):
-		case <-ch:
+		exeRes, err = ProcessExecutor(runExe)
+		if err != nil {
+			res.Status = model.StatusIE.GetStatus()
+			res.Message = fmt.Sprintf("run executor failed: %v", err.Error())
+			return
 		}
-		res.Stdout = stdout
-		res.Stderr = stderr
+
+		exePipe.Out.Writer.Close()
+		exePipe.Err.Writer.Close()
+
+		res.Stderr, err = exePipe.Err.Read()
+		if err != nil {
+			res.Status = model.StatusIE.GetStatus()
+			res.Message = fmt.Sprintf("read stderr pipe failed: %v", err.Error())
+		}
+
+		res.Stdout, err = exePipe.Out.Read()
+		if err != nil {
+			res.Status = model.StatusIE.GetStatus()
+			res.Message = fmt.Sprintf("read stdout pipe failed: %v", err.Error())
+			return
+		}
+
 		res.Time = exeRes.Time
 		res.Memory = exeRes.Memory
 		if exeRes.ExitCode == 3 {
@@ -199,7 +178,7 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdi
 		}
 		if exeRes.ExitCode == 2 {
 			res.Status = model.StatusIE.GetStatus()
-			res.Message = stderr
+			res.Message = res.Stderr
 			return
 		}
 		if exeRes.Time > runExe.Limiter.CpuTime {
@@ -219,7 +198,7 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdi
 		res.Status = model.StatusAC.GetStatus()
 
 		if expectedOutput != "" {
-			if !utils.StringsEqualIgnoreFinalNewline(stdout, expectedOutput) {
+			if !utils.StringsEqualIgnoreFinalNewline(res.Stdout, expectedOutput) {
 				res.Status = model.StatusWA.GetStatus()
 				return
 			}
@@ -253,32 +232,30 @@ func CompileExecutor(compileCmd, dir string) (err error) {
 		RunFlag: false,
 	}
 
-	stderr := make([]byte, 1024)
-	var stderrN int
-	stdchan := make(chan bool)
+	comchan := make(chan bool)
+	var res model.ExecutorResult
 
 	// 启动标准错误读取协程
 	go func() {
-		stderrN, _ = comPipe.Err.Reader.Read(stderr)
-		stdchan <- true
+		res, err = ProcessExecutor(executor)
+		if err != nil {
+			return
+		}
+		comchan <- true
 	}()
-
-	res, err := ProcessExecutor(executor)
 
 	// 使用 select 实现超时控制
 	select {
-	case <-stdchan:
-		// 标准错误读取完成
+	case <-comchan:
 	case <-time.After(time.Second * time.Duration(conf.Conf.Executor.CompileTimeout)):
 		// return errors.New("timeout reading from stderr")
 	}
+	comPipe.Err.Writer.Close()
 
-	if err != nil {
-		return
-	}
+	stderr, err := comPipe.Err.Read()
 
 	if res.ExitCode != 0 {
-		return errors.New(string(stderr[:stderrN]))
+		return errors.New(stderr)
 	}
 	if res.Signal != 0 {
 		return errors.New(SignalMessage(res.Signal))
@@ -325,4 +302,5 @@ func ResultC2GO(result *C.Result) model.ExecutorResult {
 
 func init() {
 	C.InitFilter()
+	os.RemoveAll("tem")
 }
