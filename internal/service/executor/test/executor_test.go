@@ -17,8 +17,6 @@ func TestProcess(t *testing.T) {
 	req := model.SubmitRequest{
 		SourceCode:     "#include <stdio.h>\n\nint main(void) {\n  char name[10];\n  scanf(\"%s\", name);\n  printf(\"hello, %s\\n\", name);\n  return 0;\n}",
 		LanguageID:     1,
-		MemoryLimit:    128,
-		CpuTimeLimit:   1,
 		Stdin:          "world\n",
 		ExpectedOutput: "hello, world\n",
 	}
