@@ -4,12 +4,28 @@
 package executor_test
 
 import (
+	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
 	"nightcord-server/internal/service/executor"
 	"os"
 	"sync"
 	"testing"
 )
+
+func TestProcess(t *testing.T) {
+	conf.InitConfig()
+	req := model.SubmitRequest{
+		SourceCode:     "#include <stdio.h>\n\nint main(void) {\n  char name[10];\n  scanf(\"%s\", name);\n  printf(\"hello, %s\\n\", name);\n  return 0;\n}",
+		LanguageID:     1,
+		MemoryLimit:    128,
+		CpuTimeLimit:   1,
+		Stdin:          "world\n",
+		ExpectedOutput: "hello, world\n",
+	}
+	res := executor.ProcessJob(req)
+
+	t.Logf("%+v", res)
+}
 
 func TestExecutor(t *testing.T) {
 	inR, inW, err := os.Pipe()
@@ -28,7 +44,7 @@ func TestExecutor(t *testing.T) {
 	}
 	defer errR.Close()
 	e := model.Executor{
-		Command: "test_a+b",
+		Command: "./test_a+b",
 		Dir:     ".",
 		Limiter: model.Limiter{
 			CpuTime: 1,

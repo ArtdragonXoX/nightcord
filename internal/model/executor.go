@@ -41,12 +41,6 @@ type Limiter struct {
 	Memory  uint
 }
 
-type ExecutorPipe struct {
-	In  *Pipe
-	Out *Pipe
-	Err *Pipe
-}
-
 type ExecutorResult struct {
 	ExitCode int
 	Memory   uint
@@ -62,6 +56,12 @@ type Executor struct {
 	Stdout  *os.File
 	Stderr  *os.File
 	RunFlag bool
+}
+
+type ExecutorPipe struct {
+	In  *Pipe
+	Out *Pipe
+	Err *Pipe
 }
 
 func (p *ExecutorPipe) Close() error {

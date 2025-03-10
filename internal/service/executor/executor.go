@@ -3,22 +3,26 @@
 
 package executor
 
+// #cgo LDFLAGS: -lseccomp
+/*
+#include "executor.h"
+*/
+import "C"
+
 import (
-	"context"
+	"errors"
 	"fmt"
-	"io"
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
 	"nightcord-server/internal/service/language"
 	"nightcord-server/utils"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 func Init() {
@@ -34,14 +38,14 @@ func Init() {
 // worker 不断从jobQueue中取任务执行
 func worker(id int, jobs <-chan *model.Job) {
 	for job := range jobs {
-		result := processJob(job.Request)
+		result := ProcessJob(job.Request)
 		job.RespChan <- result
 	}
 }
 
 // processJob 执行一次代码评测
-func processJob(req model.SubmitRequest) model.Result {
-	var res model.Result
+func ProcessJob(req model.SubmitRequest) (res model.Result) {
+	var err error
 	// 查找对应的语言配置
 	var lang model.Language
 	found := false
@@ -56,172 +60,258 @@ func processJob(req model.SubmitRequest) model.Result {
 		res.Status = model.StatusIE.GetStatus()
 		msg := "language not found"
 		res.Message = msg
-		return res
+		return
 	}
 
-	// 生成随机文件夹（六位字母+数字）
-	folderName := utils.RandomString(6)
-	if err := os.Mkdir(folderName, 0755); err != nil {
+	var folderName string
+	folderName = utils.RandomString(6)
+	err = os.Mkdir(folderName, 0755)
+	if err != nil {
 		res.Status = model.StatusIE.GetStatus()
-		msg := err.Error()
-		res.Message = msg
-		return res
+		res.Message = err.Error()
+		return
 	}
-	// 评测结束后删除临时文件夹
 	defer os.RemoveAll(folderName)
 
 	// 将源代码写入文件
 	sourceFilePath := filepath.Join(folderName, lang.SourceFile)
 	if err := os.WriteFile(sourceFilePath, []byte(req.SourceCode), 0644); err != nil {
 		res.Status = model.StatusIE.GetStatus()
-		msg := err.Error()
-		res.Message = msg
-		return res
+		res.Message = err.Error()
+		return
 	}
 
 	// 如语言配置中有编译命令，则先进行编译
 	if strings.TrimSpace(lang.CompileCmd) != "" {
-		// 这里将编译命令中的 %s 替换为空字符串（可扩展为传递其它参数）
-		compileCmdStr := fmt.Sprintf(lang.CompileCmd, "")
-		compileCmd := exec.Command("bash", "-c", compileCmdStr)
-		compileCmd.Dir = folderName
-		compileOutput, err := compileCmd.CombinedOutput()
-		if err != nil {
-			outputStr := string(compileOutput)
-			res.CompileOutput = outputStr
-			res.Status = model.StatusCE.GetStatus()
-			msg := err.Error()
-			res.Message = msg
-			return res
+		// 这里将编译命令中的 %s 替换为-w（忽略warnings）
+		compileCmdStr := fmt.Sprintf(lang.CompileCmd, "-w")
+		if err := CompileExecutor(compileCmdStr, folderName); err != nil {
+			res.Status = model.StatusIE.GetStatus()
+			res.CompileOutput = err.Error()
+			return
 		}
 	}
 
-	// 构建运行命令，设置内存限制（ulimit -v）和通过/usr/bin/time获取CPU时间及内存数据
-	runCmdStr := fmt.Sprintf("ulimit -v %d; /usr/bin/time -f '__TIME__:%%S S,__MEM__:%%M KB' %s", req.MemoryLimit, lang.RunCmd)
-	timeoutDuration := time.Duration((req.CpuTimeLimit + conf.Conf.Executor.ExtraCPUTime) * float64(time.Second))
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
-	defer cancel()
+	runExe := GetRunExecutor(lang.RunCmd,
+		model.Limiter{
+			CpuTime: conf.Conf.Executor.CPUTimeLimit,
+			Memory:  conf.Conf.Executor.MemoryLimit,
+		},
+		folderName)
+	res = runExe(req.Stdin, req.ExpectedOutput)
+	return
+}
 
-	runCmd := exec.CommandContext(ctx, "bash", "-c", runCmdStr)
-	runCmd.Dir = folderName
-	if req.Stdin != "" {
-		runCmd.Stdin = strings.NewReader(req.Stdin)
+func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdin, expectedOutput string) model.Result {
+	if limiter.CpuTime == 0 {
+		limiter.CpuTime = conf.Conf.Executor.CPUTimeLimit
 	}
-
-	// 获取标准输出和标准错误
-	stdoutPipe, err := runCmd.StdoutPipe()
-	if err != nil {
-		res.Status = model.StatusIE.GetStatus()
-		msg := err.Error()
-		res.Message = msg
-		return res
+	if limiter.Memory == 0 {
+		limiter.Memory = conf.Conf.Executor.MemoryLimit
 	}
-	stderrPipe, err := runCmd.StderrPipe()
-	if err != nil {
-		res.Status = model.StatusIE.GetStatus()
-		msg := err.Error()
-		res.Message = msg
-		return res
+	exeTemplate := model.Executor{
+		Command: command,
+		Dir:     dir,
+		Limiter: limiter,
+		RunFlag: true,
 	}
+	return func(stdin, expectedOutput string) (res model.Result) {
+		exePipe, err := model.NewExecutorPipe()
+		defer exePipe.Close()
+		if err != nil {
+			res.Status = model.StatusIE.GetStatus()
+			res.Message = fmt.Sprintf("new executor pipe failed: %v", err.Error())
+			return
+		}
+		runExe := exeTemplate
+		runExe.Stdin = exePipe.In.Reader
+		runExe.Stdout = exePipe.Out.Writer
+		runExe.Stderr = exePipe.Err.Writer
+		_, err = exePipe.In.Write(stdin)
+		if err != nil {
+			res.Status = model.StatusIE.GetStatus()
+			res.Message = fmt.Sprintf("write stdin pipe failed: %v", err.Error())
+			return
+		}
+		defer exePipe.In.Writer.Close()
+		var stdout, stderr string
+		var wg sync.WaitGroup
+		var ch = make(chan bool)
+		wg.Add(2)
 
-	if err := runCmd.Start(); err != nil {
-		res.Status = model.StatusIE.GetStatus()
-		msg := err.Error()
-		res.Message = msg
-		return res
-	}
+		// 异步读取标准输出
+		go func() {
+			defer wg.Done()
+			stdout, err = exePipe.Out.Read()
+			if err != nil {
+				res.Status = model.StatusIE.GetStatus()
+				res.Message = fmt.Sprintf("read stdout pipe failed: %v", err.Error())
+				return
+			}
+		}()
 
-	stdoutBytes, _ := io.ReadAll(stdoutPipe)
-	stderrBytes, _ := io.ReadAll(stderrPipe)
+		// 异步读取标准错误
+		go func() {
+			defer wg.Done()
+			stderr, err = exePipe.Err.Read()
+			if err != nil {
+				res.Status = model.StatusIE.GetStatus()
+				res.Message = fmt.Sprintf("read stderr pipe failed: %v", err.Error())
+			}
+		}()
 
-	err = runCmd.Wait()
+		var exeRes model.ExecutorResult
 
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-			if status.Signaled() {
-				switch status.Signal() {
-				case syscall.SIGSEGV:
-					res.Status = model.StatusRESIGSEGV.GetStatus()
-					msg := "内存段错误"
-					res.Stderr = msg
-					return res
-				case syscall.SIGXFSZ:
-					res.Status = model.StatusRESIGXFSZ.GetStatus()
-					msg := "文件大小限制超出"
-					res.Stderr = msg
-					return res
-				case syscall.SIGFPE:
-					res.Status = model.StatusRESIGFPE.GetStatus()
-					msg := "算术运算错误"
-					res.Stderr = msg
-					return res
-				case syscall.SIGABRT:
-					res.Status = model.StatusRESIGABRT.GetStatus()
-					msg := "程序异常终止"
-					res.Stderr = msg
-					return res
-				}
+		go func() {
+			exeRes, err = ProcessExecutor(runExe)
+			if err != nil {
+				res.Status = model.StatusIE.GetStatus()
+				res.Message = fmt.Sprintf("run executor failed: %v", err.Error())
+				return
+			}
+
+			wg.Wait()
+			ch <- false
+		}()
+		select {
+		case <-time.After(time.Duration(runExe.Limiter.CpuTime+conf.Conf.Executor.ExtraCPUTime) * time.Second):
+		case <-ch:
+		}
+		res.Stdout = stdout
+		res.Stderr = stderr
+		res.Time = exeRes.Time
+		res.Memory = exeRes.Memory
+		if exeRes.ExitCode == 3 {
+			res.Status = model.StatusIE.GetStatus()
+			res.Message = "stderr pipe setup failed."
+			return
+		}
+		if exeRes.ExitCode == 2 {
+			res.Status = model.StatusIE.GetStatus()
+			res.Message = stderr
+			return
+		}
+		if exeRes.Time > runExe.Limiter.CpuTime {
+			res.Status = model.StatusTLE.GetStatus()
+			return
+		}
+		if exeRes.Memory > runExe.Limiter.Memory*1024 {
+			res.Status = model.StatusRESIGSEGV.GetStatus()
+			return
+		}
+		if exeRes.Signal != 0 {
+			res.Status = SignalStatus(exeRes.Signal).GetStatus()
+			res.Message = SignalMessage(exeRes.Signal)
+			return
+		}
+
+		res.Status = model.StatusAC.GetStatus()
+
+		if expectedOutput != "" {
+			if !utils.StringsEqualIgnoreFinalNewline(stdout, expectedOutput) {
+				res.Status = model.StatusWA.GetStatus()
+				return
 			}
 		}
+
+		return
+	}
+}
+
+func CompileExecutor(compileCmd, dir string) (err error) {
+	comPipe, err := model.NewExecutorPipe()
+	defer comPipe.Close()
+	if err != nil {
+		return
 	}
 
-	// 判断是否运行超时
-	if ctx.Err() == context.DeadlineExceeded {
-		res.Status = model.StatusTLE.GetStatus()
-	} else if err != nil {
-		res.Status = model.StatusRE.GetStatus()
-		msg := err.Error()
-		res.Stderr = msg
-	} else {
-		res.Status = model.StatusAC.GetStatus()
+	if strings.TrimSpace(compileCmd) == "" {
+		err = errors.New("compile command is empty")
+		return
+	}
+	executor := model.Executor{
+		Command: compileCmd,
+		Dir:     dir,
+		Limiter: model.Limiter{
+			CpuTime: conf.Conf.Executor.CompileTimeout,
+			Memory:  uint(conf.Conf.Executor.CompileMemory),
+		},
+		Stdin:   comPipe.In.Reader,
+		Stdout:  comPipe.Out.Writer,
+		Stderr:  comPipe.Err.Writer,
+		RunFlag: false,
 	}
 
-	// 从stderr中提取CPU时间和内存信息（使用正则）
-	stderrStr := string(stderrBytes)
-	regex := regexp.MustCompile(`__TIME__:(?P<time>\d+\.\d{2}) S,__MEM__:(?P<memory>\d+) KB`)
-	matches := regex.FindStringSubmatch(stderrStr)
-	if len(matches) >= 3 {
-		timeParts := strings.Split(matches[1], ":")
-		if len(timeParts) == 2 {
-			minutes, _ := strconv.Atoi(timeParts[0])
-			seconds, _ := strconv.ParseFloat(timeParts[1], 64)
-			res.Time = float64(minutes)*60 + seconds
-		} else {
-			res.Time = 0.0 // 格式错误处理
-		}
-		memInt, _ := strconv.Atoi(matches[2])
-		res.Memory = memInt
-		// 将提取的时间信息从stderr中移除
-		stderrStr = regex.ReplaceAllString(stderrStr, "")
-		stderrStr = strings.TrimSpace(stderrStr)
-		if stderrStr == "" {
-			res.Stderr = ""
-		} else {
-			res.Stderr = stderrStr
-		}
-	} else {
-		// 如果未提取到信息，则用超时时间作为近似值
-		res.Time = timeoutDuration.Seconds()
-		res.Memory = 0
-		if stderrStr == "" {
-			res.Stderr = ""
-		} else {
-			res.Stderr = stderrStr
-		}
+	stderr := make([]byte, 1024)
+	var stderrN int
+	stdchan := make(chan bool)
+
+	// 启动标准错误读取协程
+	go func() {
+		stderrN, _ = comPipe.Err.Reader.Read(stderr)
+		stdchan <- true
+	}()
+
+	res, err := ProcessExecutor(executor)
+
+	// 使用 select 实现超时控制
+	select {
+	case <-stdchan:
+		// 标准错误读取完成
+	case <-time.After(time.Second * time.Duration(conf.Conf.Executor.CompileTimeout)):
+		// return errors.New("timeout reading from stderr")
 	}
 
-	res.Stdout = string(stdoutBytes)
-
-	if res.Status.Id == model.StatusAC {
-		if res.Time != 0.0 && res.Time > req.CpuTimeLimit {
-			res.Status = model.StatusTLE.GetStatus()
-		}
+	if err != nil {
+		return
 	}
 
-	// 若预期输出不匹配且状态为AC，则返回 Wrong Answer
-	if req.ExpectedOutput != "" && res.Stdout != req.ExpectedOutput && res.Status.Id == model.StatusAC {
-		res.Status = model.StatusWA.GetStatus()
+	if res.ExitCode != 0 {
+		return errors.New(string(stderr[:stderrN]))
 	}
+	if res.Signal != 0 {
+		return errors.New(SignalMessage(res.Signal))
+	}
+	return
+}
 
-	return res
+func ProcessExecutor(executor model.Executor) (model.ExecutorResult, error) {
+	cExe := ExecutorGo2C(executor)
+	defer C.free(unsafe.Pointer(cExe.Dir))
+	defer C.free(unsafe.Pointer(cExe.Command))
+	exitCode := C.Execute(cExe)
+	if int32(exitCode) != 0 {
+		return model.ExecutorResult{}, errors.New("executor error")
+	}
+	return ResultC2GO(&cExe.Result), nil
+}
+
+func ExecutorGo2C(executor model.Executor) *C.Executor {
+	return &C.Executor{
+		Command: C.CString(executor.Command),
+		Dir:     C.CString(executor.Dir),
+		Limit: C.Limiter{
+			CpuTime_cur: C.float(executor.Limiter.CpuTime),
+			CpuTime_max: C.float(executor.Limiter.CpuTime + conf.Conf.Executor.ExtraCPUTime),
+			Memory_cur:  C.int(executor.Limiter.Memory),
+			Memory_max:  C.int(executor.Limiter.Memory),
+		},
+		StdinFd:  C.int(executor.Stdin.Fd()),
+		StdoutFd: C.int(executor.Stdout.Fd()),
+		StderrFd: C.int(executor.Stderr.Fd()),
+		RunFlag:  C.int(utils.BoolToInt(executor.RunFlag)),
+	}
+}
+
+func ResultC2GO(result *C.Result) model.ExecutorResult {
+	return model.ExecutorResult{
+		ExitCode: int(result.ExitCode),
+		Memory:   uint(result.Memory),
+		Signal:   syscall.Signal(result.Signal),
+		Time:     float64(result.Time),
+	}
+}
+
+func init() {
+	C.InitFilter()
 }
