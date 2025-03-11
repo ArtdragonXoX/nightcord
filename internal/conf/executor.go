@@ -1,7 +1,8 @@
 package conf
 
 type ExecutorConf struct {
-	Pool           int     `yaml:"pool" json:"pool"`
+	JobPool        int     `yaml:"job_pool" json:"job_pool"`
+	RunPool        int     `yaml:"run_pool" json:"run_pool"`
 	ExtraCPUTime   float64 `yaml:"extra_cpu_time" json:"extra_cpu_time"`
 	CompileTimeout float64 `yaml:"compile_timeout"` // seconds
 	CompileMemory  int     `yaml:"compile_memory"`  // KB
@@ -10,8 +11,11 @@ type ExecutorConf struct {
 }
 
 func (c *ExecutorConf) Default() {
-	if c.Pool == 0 {
-		c.Pool = 5
+	if c.JobPool == 0 {
+		c.JobPool = 5
+	}
+	if c.RunPool == 0 {
+		c.RunPool = 5
 	}
 	if c.ExtraCPUTime == 0 {
 		c.ExtraCPUTime = 0.5
