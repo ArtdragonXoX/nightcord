@@ -2,6 +2,7 @@ package utils
 
 import "strings"
 
+// 比较两个字符串是否相等，忽略末尾的换行符
 func StringsEqualIgnoreFinalNewline(a, b string) bool {
 
 	return trimNewline(a) == trimNewline(b)

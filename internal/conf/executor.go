@@ -1,13 +1,13 @@
 package conf
 
 type ExecutorConf struct {
-	JobPool        int     `yaml:"job_pool" json:"job_pool"`
-	RunPool        int     `yaml:"run_pool" json:"run_pool"`
-	ExtraCPUTime   float64 `yaml:"extra_cpu_time" json:"extra_cpu_time"`
-	CompileTimeout float64 `yaml:"compile_timeout"` // seconds
-	CompileMemory  int     `yaml:"compile_memory"`  // KB
-	CPUTimeLimit   float64 `yaml:"cpu_time_limit"`  // seconds
-	MemoryLimit    uint    `yaml:"memory_limit"`    // KB
+	JobPool        int     `yaml:"job_pool" json:"job_pool"`             // 任务协程池池数量
+	RunPool        int     `yaml:"run_pool" json:"run_pool"`             // 运行协程池数量
+	ExtraCPUTime   float64 `yaml:"extra_cpu_time" json:"extra_cpu_time"` // seconds 在超出限制时间后的额外时间
+	CompileTimeout float64 `yaml:"compile_timeout"`                      // seconds 最大编译时间
+	CompileMemory  int     `yaml:"compile_memory"`                       // KB 最大编译内存
+	CPUTimeLimit   float64 `yaml:"cpu_time_limit"`                       // seconds 默认运行时间
+	MemoryLimit    uint    `yaml:"memory_limit"`                         // KB 默认运行内存
 }
 
 func (c *ExecutorConf) Default() {

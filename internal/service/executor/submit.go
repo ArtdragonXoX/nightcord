@@ -17,6 +17,7 @@ func SubmitJob(req model.SubmitRequest) model.JudgeResult {
 	return <-job.RespChan
 }
 
+// SubmitExeJob 提交运行任务到消息队列，并阻塞等待执行结果返回
 func SubmitExeJob(runExe model.RunExe, req model.SubmitRequest) []model.TestResult {
 	createJob := func(tc model.Testcase) *model.RunJob {
 		return &model.RunJob{

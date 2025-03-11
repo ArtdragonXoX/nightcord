@@ -2,6 +2,7 @@ package utils
 
 import "os"
 
+// 判断文件是否存在
 func IsFileExists(filePath string) (bool, error) {
 	_, err := os.Stat(filePath)
 	if err != nil {
@@ -13,6 +14,7 @@ func IsFileExists(filePath string) (bool, error) {
 	return true, nil // 文件存在，返回true和nil的error
 }
 
+// 保证文件夹存在
 func EnsureDir(dir string) error {
 	// 检查文件夹是否存在
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
