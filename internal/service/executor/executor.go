@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 	"unsafe"
 )
 
@@ -29,21 +28,34 @@ func Init() {
 	jobQueue = make(chan *model.Job, 100)
 
 	// 启动协程池，数量由配置决定
-	for i := 0; i < conf.Conf.Executor.Pool; i++ {
-		go worker(i, jobQueue)
+	for range conf.Conf.Executor.JobPool {
+		go worker(jobQueue)
+	}
+
+	runQueue = make(chan *model.RunJob, 500)
+
+	for range conf.Conf.Executor.RunPool {
+		go runWorker(runQueue)
 	}
 }
 
 // worker 不断从jobQueue中取任务执行
-func worker(id int, jobs <-chan *model.Job) {
+func worker(jobs <-chan *model.Job) {
 	for job := range jobs {
 		result := ProcessJob(job.Request)
 		job.RespChan <- result
 	}
 }
 
+func runWorker(jobs <-chan *model.RunJob) {
+	for job := range jobs {
+		res := job.RunFunc(job.Testcase)
+		job.RespChan <- res
+	}
+}
+
 // processJob 执行一次代码评测
-func ProcessJob(req model.SubmitRequest) (res model.Result) {
+func ProcessJob(req model.SubmitRequest) (res model.JudgeResult) {
 	var err error
 	// 查找对应的语言配置
 	var lang model.Language
@@ -93,12 +105,18 @@ func ProcessJob(req model.SubmitRequest) (res model.Result) {
 
 	// 如语言配置中有编译命令，则先进行编译
 	if strings.TrimSpace(lang.CompileCmd) != "" {
-		// 这里将编译命令中的 %s 替换为-w（忽略warnings）
-		compileCmdStr := fmt.Sprintf(lang.CompileCmd, "-w")
-		if err := CompileExecutor(compileCmdStr, folderName); err != nil {
-			res.Status = model.StatusIE.GetStatus()
-			res.CompileOutput = err.Error()
-			return
+		compileCmdStr := fmt.Sprintf(lang.CompileCmd, "")
+		complieRes := CompileExecutor(compileCmdStr, folderName)
+		res.Compilation = complieRes
+		if !complieRes.Success {
+			if complieRes.Message != "" {
+				res.Message = complieRes.Message
+				res.Status = model.StatusIE.GetStatus()
+				return
+			} else {
+				res.Status = model.StatusCE.GetStatus()
+				return
+			}
 		}
 	}
 
@@ -108,11 +126,27 @@ func ProcessJob(req model.SubmitRequest) (res model.Result) {
 			Memory:  req.MemoryLimit,
 		},
 		folderName)
-	res = runExe(req.Stdin, req.ExpectedOutput)
+
+	testreses := SubmitExeJob(runExe, req)
+
+	res.TestResult = testreses
+
+	for _, testres := range res.TestResult {
+		if testres.Status.Id > res.Status.Id {
+			res.Status = testres.Status
+		}
+		if testres.Time > res.MaxTime {
+			res.MaxTime = testres.Time
+		}
+		if testres.Memory > res.MaxMemory {
+			res.MaxMemory = testres.Memory
+		}
+	}
+
 	return
 }
 
-func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdin, expectedOutput string) model.Result {
+func GetRunExecutor(command string, limiter model.Limiter, dir string) model.RunExe {
 	if limiter.CpuTime == 0 {
 		limiter.CpuTime = conf.Conf.Executor.CPUTimeLimit
 	}
@@ -125,7 +159,7 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdi
 		Limiter: limiter,
 		RunFlag: true,
 	}
-	return func(stdin, expectedOutput string) (res model.Result) {
+	return func(testcase model.Testcase) (res model.TestResult) {
 		exePipe, err := model.NewExecutorPipe()
 		defer exePipe.Close()
 		if err != nil {
@@ -137,7 +171,7 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdi
 		runExe.Stdin = exePipe.In.Reader
 		runExe.Stdout = exePipe.Out.Writer
 		runExe.Stderr = exePipe.Err.Writer
-		_, err = exePipe.In.Write(stdin)
+		_, err = exePipe.In.Write(testcase.Stdin)
 		if err != nil {
 			res.Status = model.StatusIE.GetStatus()
 			res.Message = fmt.Sprintf("write stdin pipe failed: %v", err.Error())
@@ -197,8 +231,8 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdi
 
 		res.Status = model.StatusAC.GetStatus()
 
-		if expectedOutput != "" {
-			if !utils.StringsEqualIgnoreFinalNewline(res.Stdout, expectedOutput) {
+		if testcase.ExpectedOutput != "" {
+			if !utils.StringsEqualIgnoreFinalNewline(res.Stdout, testcase.ExpectedOutput) {
 				res.Status = model.StatusWA.GetStatus()
 				return
 			}
@@ -208,15 +242,16 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(stdi
 	}
 }
 
-func CompileExecutor(compileCmd, dir string) (err error) {
+func CompileExecutor(compileCmd, dir string) (res model.CompilationResult) {
 	comPipe, err := model.NewExecutorPipe()
 	defer comPipe.Close()
 	if err != nil {
+		res.Message = err.Error()
 		return
 	}
 
 	if strings.TrimSpace(compileCmd) == "" {
-		err = errors.New("compile command is empty")
+		res.Message = "compile command is empty"
 		return
 	}
 	executor := model.Executor{
@@ -232,34 +267,36 @@ func CompileExecutor(compileCmd, dir string) (err error) {
 		RunFlag: false,
 	}
 
-	comchan := make(chan bool)
-	var res model.ExecutorResult
-
-	// 启动标准错误读取协程
-	go func() {
-		res, err = ProcessExecutor(executor)
-		if err != nil {
-			return
-		}
-		comchan <- true
-	}()
-
-	// 使用 select 实现超时控制
-	select {
-	case <-comchan:
-	case <-time.After(time.Second * time.Duration(conf.Conf.Executor.CompileTimeout)):
-		// return errors.New("timeout reading from stderr")
+	exeRes, err := ProcessExecutor(executor)
+	if err != nil {
+		return
 	}
+
 	comPipe.Err.Writer.Close()
 
 	stderr, err := comPipe.Err.Read()
 
-	if res.ExitCode != 0 {
-		return errors.New(stderr)
+	res.CompileTime = exeRes.Time
+
+	if exeRes.ExitCode == 3 {
+		res.Message = "stderr pipe setup failed."
+		return
+	} else if exeRes.ExitCode == 2 {
+		res.Message = stderr
+		return
+	} else if exeRes.ExitCode != 0 {
+		res.Output = stderr
+		return
 	}
-	if res.Signal != 0 {
-		return errors.New(SignalMessage(res.Signal))
+	if stderr != "" {
+		res.Output = stderr
+		return
 	}
+	if exeRes.Signal != 0 {
+		res.Output = SignalMessage(exeRes.Signal)
+		return
+	}
+	res.Success = true
 	return
 }
 
