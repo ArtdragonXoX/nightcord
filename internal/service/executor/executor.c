@@ -85,7 +85,7 @@ int childProcess(Executor *executor)
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1)
     {
         perror("prctl(PR_SET_NO_NEW_PRIVS)");
-        _exit(3);
+        _exit(2);
     }
     execl("/bin/sh", "sh", "-c", executor->Command, (char *)NULL);
     perror("execl fail");
