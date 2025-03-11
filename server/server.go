@@ -11,6 +11,7 @@ var (
 )
 
 func InitServer() error {
+	gin.SetMode(gin.ReleaseMode)
 	config := conf.Conf.Server
 
 	// 创建gin实例
