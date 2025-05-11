@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"nightcord-server/internal/model"
 	"sync"
 )
@@ -12,12 +13,12 @@ type Job struct {
 }
 
 type JobManager struct {
-	JobQueue       chan *Job         // 任务队列
-	JobNum         int               // 任务总数
-	JobPoolNum     int               // 任务池大小
-	JobRunners     map[int]JobRunner // 任务运行器
-	JobRunnersLock sync.Mutex        // 任务运行器锁
-	JobStatusChan  chan struct{}     // 任务状态通道
+	JobQueue       chan *Job          // 任务队列
+	JobNum         int                // 任务总数
+	JobPoolNum     int                // 任务池大小
+	JobRunners     map[int]*JobRunner // 任务运行器
+	JobRunnersLock sync.Mutex         // 任务运行器锁
+	JobStatusChan  chan struct{}      // 任务状态通道
 }
 
 func NewJobManager(jobNum, jobPoolNum int) *JobManager {
@@ -25,11 +26,11 @@ func NewJobManager(jobNum, jobPoolNum int) *JobManager {
 		JobQueue:   make(chan *Job, jobNum),
 		JobNum:     jobNum,
 		JobPoolNum: jobPoolNum,
-		JobRunners: make(map[int]JobRunner),
+		JobRunners: make(map[int]*JobRunner),
 	}
 	for i := 0; i < jobPoolNum; i++ {
 		jobRunner := NewJobRunner(i, jm.JobQueue)
-		jm.JobRunners[i] = *jobRunner
+		jm.JobRunners[i] = jobRunner
 	}
 	return jm
 }
@@ -93,6 +94,7 @@ func NewJobRunner(id int, jobQueue <-chan *Job) *JobRunner {
 		JobQueue:    jobQueue,
 		Status:      JobRunnerStatusStopped,
 		controlChan: make(chan JobControlCommand),
+		jobFinish:   make(chan struct{}),
 	}
 }
 
@@ -136,9 +138,18 @@ func (jr *JobRunner) handleJob(job *Job) {
 	jr.Status = JobRunnerStatusRunning
 	jr.Job = job
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// 记录panic错误
+				job.RespChan <- model.JudgeResult{
+					Status:  model.StatusIE.GetStatus(),
+					Message: fmt.Sprintf("Internal error: %v", r),
+				}
+			}
+			jr.jobFinish <- struct{}{}
+		}()
 		res := ProcessJob(job.Request)
 		job.RespChan <- res
-		jr.jobFinish <- struct{}{}
 	}()
 }
 
