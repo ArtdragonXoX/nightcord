@@ -27,7 +27,7 @@ void setLimits(Limiter *limiter)
     struct rlimit cpu_limit, mem_limit;
 
     /* 设置CPU时间限制（RLIMIT_CPU） */
-    cpu_limit.rlim_cur = limiter->CpuTime_cur;
+    cpu_limit.rlim_cur = limiter->CpuTime_max;
     cpu_limit.rlim_max = limiter->CpuTime_max;
     if (setrlimit(RLIMIT_CPU, &cpu_limit) == -1)
     {
