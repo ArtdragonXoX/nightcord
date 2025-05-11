@@ -21,12 +21,6 @@ const (
 	FileTest     TestcaseType = 2 // 文件测试数据，暂未实现
 )
 
-// Job 表示评测任务，由任务协程池调度执行
-type Job struct {
-	Request  SubmitRequest
-	RespChan chan JudgeResult
-}
-
 // RunJob 表示运行任务，由运行协程池调度执行
 type RunJob struct {
 	RunFunc  RunExe
@@ -38,6 +32,11 @@ type RunJob struct {
 type Testcase struct {
 	Stdin          string `json:"stdin,omitempty"`
 	ExpectedOutput string `json:"expected_output,omitempty"`
+}
+
+type TestResultWithIndex struct {
+	Index      int
+	TestResult TestResult
 }
 
 // SubmitRequest 表示提交评测时的请求体
