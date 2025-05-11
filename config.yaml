@@ -2,7 +2,9 @@ server:
   port: 2500
   token: "secret-token"
 executor:
+  job_queue: 500
   job_pool: 5
+  run_queue: 500
   run_pool: 5
   extra_cpu_time: 1
   compile_timeout: 10
