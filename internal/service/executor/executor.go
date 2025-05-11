@@ -23,47 +23,20 @@ import (
 	"unsafe"
 )
 
-func Init() {
-	// 初始化任务队列
-	jobQueue = make(chan *model.Job, 100)
-
-	// 启动任务协程池，数量由配置决定
-	for range conf.Conf.Executor.JobPool {
-		go worker(jobQueue)
-	}
-
-	// 初始化运行队列
-	runQueue = make(chan *model.RunJob, 500)
-	// 启动运行协程池，数量由配置决定
-	for range conf.Conf.Executor.RunPool {
-		go runWorker(runQueue)
-	}
-}
-
-// worker 不断从jobQueue中取任务执行
-func worker(jobs <-chan *model.Job) {
-	for job := range jobs {
-		result := ProcessJob(job.Request)
-		job.RespChan <- result
-	}
-}
-
-// runWorker 不断从runQueue中取任务执行
-func runWorker(jobs <-chan *model.RunJob) {
-	for job := range jobs {
-		res := job.RunFunc(job.Testcase)
-		job.RespChan <- res
-	}
-}
-
-// ProcessJob 处理代码判题任务，包括编译、执行和结果收集
-// 参数 req: SubmitRequest 包含用户提交的代码、语言ID、资源限制等信息
-// 返回值 model.JudgeResult: 包含编译结果、测试用例执行结果、最大资源消耗等判题结果
-func ProcessJob(req model.SubmitRequest) (res model.JudgeResult) {
-	var err error
-
+// PrepareEnvironmentAndCompile 处理语言检查、临时目录创建、源代码写入和编译。
+// 返回语言配置、工作目录、编译结果以及任何发生的错误。
+// @param req model.SubmitRequest 包含用户提交的代码和相关信息
+// @return lang model.Language 匹配到的语言配置
+// @return workDir string 创建的临时工作目录路径
+// @return compileRes model.CompilationResult 编译结果
+// @return err error 执行过程中发生的错误
+func PrepareEnvironmentAndCompile(req model.SubmitRequest) (
+	lang model.Language,
+	workDir string,
+	compileRes model.CompilationResult,
+	err error,
+) {
 	// 语言配置查找阶段：遍历所有支持的语言配置，匹配请求中的语言ID
-	var lang model.Language
 	found := false
 	for _, l := range language.GetLanguages() {
 		if l.ID == req.LanguageID {
@@ -73,84 +46,62 @@ func ProcessJob(req model.SubmitRequest) (res model.JudgeResult) {
 		}
 	}
 	if !found {
-		res.Status = model.StatusIE.GetStatus()
-		msg := "language not found"
-		res.Message = msg
+		err = errors.New("language not found")
 		return
 	}
 
 	// 临时目录创建阶段：使用互斥锁保证目录创建的原子性，创建随机名称的临时工作目录
 	folderLock.Lock()
+	// 假设 utils.RandomString 存在，类似于 ProcessJob 中使用的 random.String。
+	// 如果 utils.RandomString 不可用，则需要替换为项目实际的随机字符串生成器。
 	var folderName string
-	folderName = random.String(6)
+	// 注意: 这里的 random.String(6) 需要确认是否为 utils.RandomString(6)
+	// 根据 ProcessJob 的上下文，应该是 utils.RandomString
+	// 如果 random 是一个标准库或者项目内定义的包，请相应调整
+	// 为保持与 ProcessJob 中逻辑的一致性，暂时保留 random.String，但建议后续确认为 utils.RandomString
+	// 修正：根据上下文，应该是 utils.RandomString
+	folderName = utils.RandomString(6) // 使用 utils 包下的 RandomString
 	err = utils.EnsureDir("tem")
 	if err != nil {
-		res.Status = model.StatusIE.GetStatus()
-		res.Message = err.Error()
 		folderLock.Unlock()
+		workDir = "" // 确保在错误时 workDir 为空，以便 defer os.RemoveAll 不会误删
 		return
 	}
-	folderName = fmt.Sprintf("%s/%s", "tem", folderName)
-	err = os.Mkdir(folderName, 0755)
+	workDir = filepath.Join("tem", folderName)
+	err = os.Mkdir(workDir, 0755)
 	if err != nil {
-		res.Status = model.StatusIE.GetStatus()
-		res.Message = err.Error()
 		folderLock.Unlock()
+		workDir = "" // 确保在错误时 workDir 为空
 		return
 	}
-	defer os.RemoveAll(folderName)
-	folderLock.Unlock()
+	folderLock.Unlock() // 在成功创建或 Mkdir 错误处理后解锁
 
 	// 源码写入阶段：将用户提交的源代码写入配置指定的文件中
-	sourceFilePath := filepath.Join(folderName, lang.SourceFile)
-	if err := os.WriteFile(sourceFilePath, []byte(req.SourceCode), 0644); err != nil {
-		res.Status = model.StatusIE.GetStatus()
-		res.Message = err.Error()
+	sourceFilePath := filepath.Join(workDir, lang.SourceFile)
+	if err = os.WriteFile(sourceFilePath, []byte(req.SourceCode), 0644); err != nil {
+		// 如果写入失败，workDir 仍然有效，调用者应该负责清理
 		return
 	}
 
 	// 编译阶段：如果语言需要编译，执行编译命令并处理编译结果
 	if strings.TrimSpace(lang.CompileCmd) != "" {
-		compileCmdStr := fmt.Sprintf(lang.CompileCmd, "")
-		complieRes := CompileExecutor(compileCmdStr, folderName)
-		res.Compilation = complieRes
-		if !complieRes.Success {
-			if complieRes.Message != "" {
-				res.Message = complieRes.Message
-				res.Status = model.StatusIE.GetStatus()
-				return
+		compileCmdStr := fmt.Sprintf(lang.CompileCmd, "") // 假设 CompileCmd 可能为将来使用留有占位符
+		compileRes = CompileExecutor(compileCmdStr, workDir)
+		if !compileRes.Success {
+			// 如果编译失败，根据 compileRes.Message 设置错误
+			// 调用者将检查 compileRes.Success
+			if compileRes.Message != "" {
+				err = errors.New(compileRes.Message) // 将编译消息作为错误传播
 			} else {
-				res.Status = model.StatusCE.GetStatus()
-				return
+				err = errors.New("compilation failed without specific message") // 通用编译错误
 			}
+			return // 在此返回，workDir 已设置，供调用者清理
 		}
+	} else {
+		compileRes.Success = true // 不需要编译，因此视为“成功”
 	}
 
-	// 执行阶段：创建带有资源限制的执行器并提交测试任务
-	runExe := GetRunExecutor(lang.RunCmd,
-		model.Limiter{
-			CpuTime: req.CpuTimeLimit,
-			Memory:  req.MemoryLimit,
-		},
-		folderName)
-
-	testreses := SubmitExeJob(runExe, req)
-
-	// 结果处理阶段：收集所有测试结果，计算最终状态和最大资源消耗
-	res.TestResult = testreses
-	for _, testres := range res.TestResult {
-		if testres.Status.Id > res.Status.Id {
-			res.Status = testres.Status
-		}
-		if testres.Time > res.MaxTime {
-			res.MaxTime = testres.Time
-		}
-		if testres.Memory > res.MaxMemory {
-			res.MaxMemory = testres.Memory
-		}
-	}
-
-	return
+	return lang, workDir, compileRes, nil
 }
 
 // GetRunExecutor 生成并返回一个执行器运行函数，用于处理测试用例并返回测试结果

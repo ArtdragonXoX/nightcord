@@ -14,14 +14,13 @@ import (
 
 func TestProcess(t *testing.T) {
 	conf.InitConfig()
-	executor.Init()
 	req := model.SubmitRequest{
 		SourceCode:     "#include <stdio.h>\n\nint main(void) {\n  char name[10];\n  scanf(\"%s\", name);\n  printf(\"hello, %s\\n\", name);\n  return 0;\n}",
 		LanguageID:     1,
 		Stdin:          "world\n",
 		ExpectedOutput: "hello, world\n",
 	}
-	res := executor.ProcessJob(req)
+	res := executor.GetJobManagerInstance().SubmitJob(req)
 
 	t.Logf("%+v", res)
 }
