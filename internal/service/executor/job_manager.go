@@ -37,6 +37,7 @@ func GetJobManagerInstance() *JobManager {
 			conf.Conf.Executor.JobPool, // 使用配置中的 JobPool 数量
 			conf.Conf.Executor.JobQueue,
 		)
+		globalJobManager.Start()
 	})
 	return globalJobManager
 }
