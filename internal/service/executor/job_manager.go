@@ -1,9 +1,11 @@
+//go:build linux
+// +build linux
+
 package executor
 
 import (
 	"fmt"
 	"nightcord-server/internal/model"
-	"sync"
 )
 
 // Job 表示评测任务，由任务管理器调度执行
@@ -13,20 +15,21 @@ type Job struct {
 }
 
 type JobManager struct {
-	JobQueue       chan *Job          // 任务队列
-	JobNum         int                // 任务总数
-	JobPoolNum     int                // 任务池大小
-	JobRunners     map[int]*JobRunner // 任务运行器
-	JobRunnersLock sync.Mutex         // 任务运行器锁
-	JobStatusChan  chan struct{}      // 任务状态通道
+	JobQueue      chan *Job          // 任务队列
+	JobQueueNum   int                // 任务队列大小
+	JobNum        int                // 任务总数
+	JobPoolNum    int                // 任务池大小
+	JobRunners    map[int]*JobRunner // 任务运行器
+	JobStatusChan chan struct{}      // 任务状态通道
 }
 
-func NewJobManager(jobNum, jobPoolNum int) *JobManager {
+func NewJobManager(jobNum, jobPoolNum, jobQueueNum int) *JobManager {
 	var jm = &JobManager{
-		JobQueue:   make(chan *Job, jobNum),
-		JobNum:     jobNum,
-		JobPoolNum: jobPoolNum,
-		JobRunners: make(map[int]*JobRunner),
+		JobQueue:    make(chan *Job, jobQueueNum),
+		JobQueueNum: jobQueueNum,
+		JobNum:      jobNum,
+		JobPoolNum:  jobPoolNum,
+		JobRunners:  make(map[int]*JobRunner),
 	}
 	for i := 0; i < jobPoolNum; i++ {
 		jobRunner := NewJobRunner(i, jm.JobQueue)
@@ -41,13 +44,80 @@ func (jm *JobManager) Start() {
 	}
 }
 
+// SubmitJob 提交一个新任务到任务队列。
+// 如果任务队列已满，则会立即返回一个表示队列已满的 JudgeResult。
+// 否则，任务会被添加到队列中，并阻塞等待任务执行完成后的结果。
 func (jm *JobManager) SubmitJob(req model.SubmitRequest) model.JudgeResult {
 	job := &Job{
 		Request:  req,
 		RespChan: make(chan model.JudgeResult),
 	}
-	jm.JobQueue <- job
-	return <-job.RespChan
+
+	select {
+	case jm.JobQueue <- job:
+		// 任务成功提交到队列，等待执行结果
+		return <-job.RespChan
+	default:
+		// 任务队列已满，返回拒绝信息
+		return model.JudgeResult{
+			Status:  model.StatusIE.GetStatus(),
+			Message: "Job queue is full, please try again later.",
+		}
+	}
+}
+
+func (jm *JobManager) StopJobRunner(id int) {
+	if jobRunner, ok := jm.JobRunners[id]; ok {
+		jobRunner.Stop()
+	}
+}
+
+func (jm *JobManager) ReleaseJobRunner(id int) {
+	if jobRunner, ok := jm.JobRunners[id]; ok {
+		jobRunner.Release()
+	}
+}
+
+func (jm *JobManager) Stop() {
+	for _, jobRunner := range jm.JobRunners {
+		jobRunner.Stop()
+	}
+}
+
+func (jm *JobManager) Release() {
+	for _, jobRunner := range jm.JobRunners {
+		jobRunner.Release()
+	}
+}
+
+func (jm *JobManager) GetJobRunnerStatus(id int) (JobRunnerStatus, error) {
+	if jobRunner, ok := jm.JobRunners[id]; ok {
+		return jobRunner.Status, nil
+	}
+	return JobRunnerStatusUnknown, fmt.Errorf("job runner %d not found", id)
+}
+
+func (jm *JobManager) GetJobRunnerStatusAll() map[int]JobRunnerStatus {
+	statusMap := make(map[int]JobRunnerStatus)
+	for id, jobRunner := range jm.JobRunners {
+		statusMap[id] = jobRunner.Status
+	}
+	return statusMap
+}
+
+func (jm *JobManager) GetJobRunnerJob(id int) (*Job, error) {
+	if jobRunner, ok := jm.JobRunners[id]; ok {
+		return jobRunner.Job, nil
+	}
+	return nil, fmt.Errorf("job runner %d not found", id)
+}
+
+func (jm *JobManager) GetJobRunnerJobAll() map[int]*Job {
+	jobMap := make(map[int]*Job)
+	for id, jobRunner := range jm.JobRunners {
+		jobMap[id] = jobRunner.Job
+	}
+	return jobMap
 }
 
 type JobRunnerStatus uint8
@@ -56,6 +126,7 @@ const (
 	JobRunnerStatusIdle JobRunnerStatus = iota
 	JobRunnerStatusRunning
 	JobRunnerStatusStopped
+	JobRunnerStatusUnknown
 )
 
 func (s JobRunnerStatus) String() string {
