@@ -9,6 +9,7 @@ import (
 	"nightcord-server/internal/model"
 	"os" // 新增: 用于 os.RemoveAll
 	"sync"
+	"time"
 )
 
 // Job 表示评测任务，由任务管理器调度执行
@@ -169,12 +170,13 @@ const (
 
 // JobRunner 表示任务运行器，负责执行具体的任务
 type JobRunner struct {
-	Id          int
-	Job         *Job
-	JobQueue    <-chan *Job
-	Status      JobRunnerStatus
-	controlChan chan JobControlCommand // 控制通道，用于接收控制命令
-	jobFinish   chan struct{}          // 任务完成通道，当任务完成时，向该通道发送信号
+	Id           int
+	Job          *Job
+	JobQueue     <-chan *Job
+	Status       JobRunnerStatus
+	controlChan  chan JobControlCommand // 控制通道，用于接收控制命令
+	jobFinish    chan struct{}          // 任务完成通道，当任务完成时，向该通道发送信号
+	jobStartTime time.Time              // 任务开始时间
 }
 
 func NewJobRunner(id int, jobQueue <-chan *Job) *JobRunner {
@@ -198,6 +200,13 @@ func (jr *JobRunner) Stop() {
 
 func (jr *JobRunner) Release() {
 	jr.controlChan <- JobControlCommandRelease
+}
+
+func (jr *JobRunner) GetTimeUsed() time.Duration {
+	if jr.Status == JobRunnerStatusRunning {
+		return time.Since(jr.jobStartTime)
+	}
+	return 0
 }
 
 func (jr *JobRunner) Run() {
@@ -225,6 +234,7 @@ func (jr *JobRunner) Run() {
 
 func (jr *JobRunner) handleJob(job *Job) {
 	jr.Status = JobRunnerStatusRunning
+	jr.jobStartTime = time.Now()
 	jr.Job = job
 	go func() {
 		var result model.JudgeResult
@@ -361,11 +371,11 @@ func (jr *JobRunner) handleJob(job *Job) {
 }
 
 func (jr *JobRunner) handleControl(cmd JobControlCommand) {
+	jr.Job = nil
 	switch cmd {
 	case JobControlCommandStop:
 		jr.Status = JobRunnerStatusStopped
 	case JobControlCommandRelease:
 		jr.Status = JobRunnerStatusIdle
 	}
-	jr.Job = nil
 }

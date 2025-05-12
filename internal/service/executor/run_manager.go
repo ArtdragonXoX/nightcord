@@ -8,6 +8,7 @@ import (
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
 	"sync"
+	"time"
 )
 
 // RunJob 表示一个运行任务，包含单个测试用例、执行命令和资源限制等
@@ -133,12 +134,13 @@ func (s RunWorkerStatus) String() string {
 // RunWorker 表示一个运行器，负责执行具体的运行任务
 // @Description RunWorker 表示一个运行器，负责执行具体的运行任务
 type RunWorker struct {
-	Id          int
-	CurrentJob  *RunJob
-	RunQueue    <-chan *RunJob
-	Status      RunWorkerStatus
-	controlChan chan struct{} // 用于停止 worker
-	jobFinish   chan struct{} // 任务完成信号
+	Id           int
+	CurrentJob   *RunJob
+	RunQueue     <-chan *RunJob
+	Status       RunWorkerStatus
+	controlChan  chan struct{} // 用于停止 worker
+	jobFinish    chan struct{} // 任务完成信号
+	runStartTime time.Time     // 运行任务开始时间
 }
 
 // NewRunWorker 创建一个新的 RunWorker
@@ -167,6 +169,16 @@ func (rw *RunWorker) Start() {
 // @Description 停止 RunWorker
 func (rw *RunWorker) Stop() {
 	close(rw.controlChan) // 关闭控制通道以通知 Run 协程停止
+}
+
+// GetTimeUsed 获取 RunWorker 已使用的时间
+// @Description 获取 RunWorker 已使用的时间
+// @Return time.Duration RunWorker 已使用的时间
+func (rw *RunWorker) GetTimeUsed() time.Duration {
+	if rw.Status == RunWorkerStatusRunning {
+		return time.Since(rw.runStartTime)
+	}
+	return 0
 }
 
 // Run 是 RunWorker 的主循环，监听任务和控制信号
@@ -200,6 +212,7 @@ func (rw *RunWorker) Run() {
 // @Param runJob *RunJob 要处理的运行任务（包含单个测试用例）
 func (rw *RunWorker) handleRunJob(runJob *RunJob) {
 	rw.Status = RunWorkerStatusRunning
+	rw.runStartTime = time.Now()
 	rw.CurrentJob = runJob
 
 	go func() {
