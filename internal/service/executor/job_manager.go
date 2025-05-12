@@ -7,24 +7,43 @@ import (
 	"fmt"
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
-	"os" // 新增: 用于 os.RemoveAll
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
+)
+
+type JobStatus uint8
+
+const (
+	JobStatusIdle JobStatus = iota
+	JobStatusRunning
+	JobStatusRelease
+	JobStatusFinished
 )
 
 // Job 表示评测任务，由任务管理器调度执行
 type Job struct {
-	Request  model.SubmitRequest
-	RespChan chan model.JudgeResult
+	Request   model.SubmitRequest
+	RespChan  chan model.JudgeResult
+	ChanClose bool
+	chanMux   sync.Mutex
+}
+
+func NewJob(req model.SubmitRequest) *Job {
+	return &Job{
+		Request:  req,
+		RespChan: make(chan model.JudgeResult),
+	}
 }
 
 type JobManager struct {
 	JobQueue      chan *Job          // 任务队列
 	JobQueueNum   int                // 任务队列大小
-	JobNum        int                // 任务数量
+	JobNum        int32              // 任务数量
 	JobPoolNum    int                // 任务池大小
 	JobRunners    map[int]*JobRunner // 任务运行器
-	JobStatusChan chan struct{}      // 任务状态通道
+	JobStatusChan chan JobStatus     // 任务状态通道
 }
 
 var (
@@ -45,13 +64,14 @@ func GetJobManagerInstance() *JobManager {
 
 func NewJobManager(jobPoolNum, jobQueueNum int) *JobManager {
 	var jm = &JobManager{
-		JobQueue:    make(chan *Job, jobQueueNum),
-		JobQueueNum: jobQueueNum,
-		JobPoolNum:  jobPoolNum,
-		JobRunners:  make(map[int]*JobRunner),
+		JobQueue:      make(chan *Job, jobQueueNum),
+		JobQueueNum:   jobQueueNum,
+		JobPoolNum:    jobPoolNum,
+		JobRunners:    make(map[int]*JobRunner),
+		JobStatusChan: make(chan JobStatus),
 	}
 	for i := 0; i < jobPoolNum; i++ {
-		jobRunner := NewJobRunner(i, jm.JobQueue)
+		jobRunner := NewJobRunner(i, jm.JobQueue, jm.JobStatusChan)
 		jm.JobRunners[i] = jobRunner
 	}
 	return jm
@@ -61,20 +81,39 @@ func (jm *JobManager) Start() {
 	for _, jobRunner := range jm.JobRunners {
 		jobRunner.Start()
 	}
+	go jm.JobNumManager()
+}
+
+func (jm *JobManager) JobNumManager() {
+	for {
+		select {
+		case status := <-jm.JobStatusChan:
+			switch status {
+			case JobStatusIdle:
+				atomic.AddInt32(&jm.JobNum, 1)
+			case JobStatusRelease:
+				atomic.AddInt32(&jm.JobNum, 1)
+			case JobStatusFinished:
+				atomic.AddInt32(&jm.JobNum, -1)
+			}
+		}
+	}
+}
+
+func (jm *JobManager) GetJobNum() int32 {
+	return atomic.LoadInt32(&jm.JobNum)
 }
 
 // SubmitJob 提交一个新任务到任务队列。
 // 如果任务队列已满，则会立即返回一个表示队列已满的 JudgeResult。
 // 否则，任务会被添加到队列中，并阻塞等待任务执行完成后的结果。
 func (jm *JobManager) SubmitJob(req model.SubmitRequest) model.JudgeResult {
-	job := &Job{
-		Request:  req,
-		RespChan: make(chan model.JudgeResult),
-	}
+	job := NewJob(req)
 
 	select {
 	case jm.JobQueue <- job:
 		// 任务成功提交到队列，等待执行结果
+		jm.JobStatusChan <- JobStatusIdle
 		return <-job.RespChan
 	default:
 		// 任务队列已满，返回拒绝信息
@@ -109,13 +148,6 @@ func (jm *JobManager) Release() {
 	}
 }
 
-func (jm *JobManager) GetJobRunnerStatus(id int) (JobRunnerStatus, error) {
-	if jobRunner, ok := jm.JobRunners[id]; ok {
-		return jobRunner.Status, nil
-	}
-	return JobRunnerStatusUnknown, fmt.Errorf("job runner %d not found", id)
-}
-
 func (jm *JobManager) GetJobRunnerStatusAll() map[int]JobRunnerStatus {
 	statusMap := make(map[int]JobRunnerStatus)
 	for id, jobRunner := range jm.JobRunners {
@@ -137,6 +169,26 @@ func (jm *JobManager) GetJobRunnerJobAll() map[int]*Job {
 		jobMap[id] = jobRunner.Job
 	}
 	return jobMap
+}
+
+func (jm *JobManager) GetJobRunnerStatus() []model.JobRunnerStatus {
+	var status []model.JobRunnerStatus
+	for i := range jm.JobPoolNum {
+		runner, ok := jm.JobRunners[i]
+		if ok {
+			status = append(status, runner.GetStatus())
+		}
+	}
+	return status
+}
+
+func (jm *JobManager) GetStatus() model.JobManagerStatus {
+	return model.JobManagerStatus{
+		JobQueueNum:  jm.JobQueueNum,
+		JobPoolNum:   jm.JobPoolNum,
+		JobNum:       jm.GetJobNum(),
+		RunnerStatus: jm.GetJobRunnerStatus(),
+	}
 }
 
 type JobRunnerStatus uint8
@@ -170,22 +222,24 @@ const (
 
 // JobRunner 表示任务运行器，负责执行具体的任务
 type JobRunner struct {
-	Id           int
-	Job          *Job
-	JobQueue     <-chan *Job
-	Status       JobRunnerStatus
-	controlChan  chan JobControlCommand // 控制通道，用于接收控制命令
-	jobFinish    chan struct{}          // 任务完成通道，当任务完成时，向该通道发送信号
-	jobStartTime time.Time              // 任务开始时间
+	Id            int
+	Job           *Job
+	JobQueue      <-chan *Job
+	Status        JobRunnerStatus
+	controlChan   chan JobControlCommand // 控制通道，用于接收控制命令
+	jobFinish     chan struct{}          // 任务完成通道，当任务完成时，向该通道发送信号
+	jobStartTime  time.Time              // 任务开始时间
+	jobStatusChan chan<- JobStatus       // 任务状态通道，用于向任务管理器报告任务状态
 }
 
-func NewJobRunner(id int, jobQueue <-chan *Job) *JobRunner {
+func NewJobRunner(id int, jobQueue <-chan *Job, jobStatusChan chan<- JobStatus) *JobRunner {
 	return &JobRunner{
-		Id:          id,
-		JobQueue:    jobQueue,
-		Status:      JobRunnerStatusStopped,
-		controlChan: make(chan JobControlCommand),
-		jobFinish:   make(chan struct{}),
+		Id:            id,
+		JobQueue:      jobQueue,
+		Status:        JobRunnerStatusStopped,
+		controlChan:   make(chan JobControlCommand),
+		jobFinish:     make(chan struct{}),
+		jobStatusChan: jobStatusChan,
 	}
 }
 
@@ -209,6 +263,14 @@ func (jr *JobRunner) GetTimeUsed() time.Duration {
 	return 0
 }
 
+func (jr *JobRunner) GetStatus() model.JobRunnerStatus {
+	return model.JobRunnerStatus{
+		Id:       jr.Id,
+		Status:   jr.Status.String(),
+		TimeUsed: jr.GetTimeUsed().Seconds(),
+	}
+}
+
 func (jr *JobRunner) Run() {
 	for jr.Status != JobRunnerStatusStopped {
 		// 根据当前状态动态设置可用的通道
@@ -227,6 +289,7 @@ func (jr *JobRunner) Run() {
 			}
 		case <-jr.jobFinish:
 			jr.Status = JobRunnerStatusIdle
+			jr.jobStatusChan <- JobStatusFinished
 			jr.Job = nil
 		}
 	}
@@ -241,6 +304,13 @@ func (jr *JobRunner) handleJob(job *Job) {
 		var workDir string // 用于确保defer中可以访问到workDir
 
 		defer func() {
+			job.chanMux.Lock()
+			defer job.chanMux.Unlock()
+			if job.ChanClose {
+				return
+			}
+			job.ChanClose = true
+			defer close(job.RespChan) // 确保关闭 RespChan
 			if workDir != "" {
 				os.RemoveAll(workDir) // 清理临时工作目录
 			}
@@ -371,6 +441,17 @@ func (jr *JobRunner) handleJob(job *Job) {
 }
 
 func (jr *JobRunner) handleControl(cmd JobControlCommand) {
+	jr.Job.chanMux.Lock()
+	defer jr.Job.chanMux.Unlock()
+	if jr.Job.ChanClose {
+		return
+	}
+	jr.Job.ChanClose = true
+	jr.Job.RespChan <- model.JudgeResult{
+		Status:  model.StatusIE.GetStatus(), // Indicate an Internal Error
+		Message: "JobRunner is stopping or releasing.",
+	}
+	close(jr.Job.RespChan)
 	jr.Job = nil
 	switch cmd {
 	case JobControlCommandStop:
@@ -378,4 +459,5 @@ func (jr *JobRunner) handleControl(cmd JobControlCommand) {
 	case JobControlCommandRelease:
 		jr.Status = JobRunnerStatusIdle
 	}
+	jr.jobStatusChan <- JobStatusRelease
 }
