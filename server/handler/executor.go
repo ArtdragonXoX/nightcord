@@ -19,3 +19,8 @@ func Executor(c *gin.Context) {
 	result := executor.SubmitJob(req)
 	c.JSON(http.StatusOK, result)
 }
+
+func GetJobStatus(c *gin.Context) {
+	status := executor.GetJobManagerInstance().GetStatus()
+	c.JSON(http.StatusOK, status)
+}
