@@ -8,4 +8,5 @@ import (
 
 func InitExecutorRoutes(router *gin.Engine) {
 	router.POST("/executor", handler.Executor)
+	router.GET("/job/status", handler.GetJobStatus)
 }
