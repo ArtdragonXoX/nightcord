@@ -69,6 +69,7 @@ void setLimits(Limiter *limiter)
  */
 int childProcess(Executor *executor)
 {
+
     // 重定向标准错误输出到executor指定的文件描述符，并关闭原始描述符
     if (dup2(executor->StderrFd, STDERR_FILENO) == -1)
     {
@@ -76,16 +77,6 @@ int childProcess(Executor *executor)
         _exit(3);
     }
     close(executor->StderrFd);
-
-    // 如果指定工作目录，切换到该目录
-    if (executor->Dir != NULL)
-    {
-        if (chdir(executor->Dir) == -1)
-        {
-            perror("chdir");
-            _exit(2);
-        }
-    }
 
     // 重定向标准输入到executor指定的文件描述符，并关闭原始描述符
     if (dup2(executor->StdinFd, STDIN_FILENO) == -1)
@@ -102,6 +93,32 @@ int childProcess(Executor *executor)
         _exit(2);
     }
     close(executor->StdoutFd);
+
+    if (executor->RunFlag)
+    {
+        int max_fd = sysconf(_SC_OPEN_MAX);
+        // 目录流关闭
+        DIR *dir = opendir("/proc/self/fd");
+        if (dir)
+        {
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL)
+            {
+                int fd = atoi(entry->d_name);
+                if (fd > 2 && fd != dirfd(dir))
+                {
+                    close(fd);
+                }
+            }
+            closedir(dir);
+        }
+    }
+
+    if (executor->Dir != NULL && chdir(executor->Dir) == -1)
+    {
+        perror("pre-chdir failed");
+        _exit(2);
+    }
 
     // 应用资源限制配置
     setLimits(&executor->Limit);
@@ -236,7 +253,27 @@ scmp_filter_ctx getRunSeccompFilter()
         SCMP_SYS(semop),
         SCMP_SYS(nanosleep),       // 禁止 nanosleep
         SCMP_SYS(clock_nanosleep), // 禁止 clock_nanosleep
+        SCMP_SYS(stat),            // 禁止文件状态查询
+        // SCMP_SYS(access),          // 禁止文件访问检查
+        SCMP_SYS(lstat),    // 禁止链接文件状态查询
+        SCMP_SYS(fstat),    // 禁止文件描述符状态查询
+        SCMP_SYS(truncate), // 禁止文件截断
+        SCMP_SYS(chdir),    // 禁止切换目录
+        SCMP_SYS(fchdir),
+        SCMP_SYS(symlink),
+        SCMP_SYS(link),
+        SCMP_SYS(renameat2),
+        SCMP_SYS(symlinkat),         // 符号链接限制
+        SCMP_SYS(linkat),            // 硬链接限制
+        SCMP_SYS(name_to_handle_at), // 文件句柄操作限制
+        SCMP_SYS(open_by_handle_at),
     };
+
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(open), 1,
+                     SCMP_A0(SCMP_CMP_MASKED_EQ, O_WRONLY | O_RDWR, 0));
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(openat), 1,
+                     SCMP_A1(SCMP_CMP_MASKED_EQ, O_WRONLY | O_RDWR, 0));
+
     for (int i = 0; i < sizeof(killCalls) / sizeof(killCalls[0]); i++)
     {
         if (seccomp_rule_add(ctx, SCMP_ACT_KILL, killCalls[i], 0) != 0)

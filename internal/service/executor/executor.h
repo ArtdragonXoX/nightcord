@@ -1,6 +1,7 @@
 #ifndef EXECUTOR_H
 #define EXECUTOR_H
 #include <stdlib.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -8,6 +9,8 @@
 #include <seccomp.h>
 #include <sys/syscall.h>
 #include <sys/prctl.h>
+#include <fcntl.h>
+#include <dirent.h>
 
 // Result 表示执行结果
 typedef struct
