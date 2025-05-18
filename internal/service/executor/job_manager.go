@@ -334,7 +334,7 @@ func (jr *JobRunner) handleJob(job *Job) {
 		}()
 
 		// 1. 调用 PrepareEnvironmentAndCompile
-		lang, wd, compileRes, err := PrepareEnvironmentAndCompile(job.Request)
+		lang, wd, compileRes, err := PrepareEnvironmentAndCompile(job.ctx, job.Request)
 		workDir = wd // 赋值给外层变量以便defer可以清理
 
 		if err != nil {
