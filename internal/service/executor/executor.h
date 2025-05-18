@@ -12,15 +12,6 @@
 #include <fcntl.h>
 #include <dirent.h>
 
-// Result 表示执行结果
-typedef struct
-{
-    float Time;
-    int Memory;
-    int Signal;
-    int ExitCode;
-} Result;
-
 // Limiter 表示限制条件
 typedef struct
 {
@@ -36,7 +27,6 @@ typedef struct
     char *Command;
     char *Dir;
     Limiter Limit;
-    Result Result;
     int StdinFd;
     int StdoutFd;
     int StderrFd;

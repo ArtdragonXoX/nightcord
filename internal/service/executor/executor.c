@@ -157,34 +157,12 @@ int Execute(Executor *executor)
     {
         childProcess(executor);
     }
-
-    /* 父进程逻辑：等待子进程结束并收集结果 */
+    /* 父进程逻辑：返回pid */
     else if (pid > 0)
     {
-        int status;
-        struct rusage usage;
-        int ret = wait4(pid, &status, 0, &usage); // 保存返回值
-
-        /* wait4调用失败，返回执行失败状态 */
-        if (ret == -1)
-        {
-            return EXIT_FAILURE;
-        }
-
-        /* 解析子进程退出状态并保存到执行器结果 */
-        executor->Result.ExitCode = WEXITSTATUS(status);
-        executor->Result.Signal = WTERMSIG(status);
-        executor->Result.Time = usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1000000.0;
-        executor->Result.Memory = usage.ru_maxrss;
+        return pid;
     }
-
-    /* fork()调用失败，返回错误码1 */
-    else
-    {
-        return 1;
-    }
-
-    return EXIT_SUCCESS;
+    return 0;
 }
 
 // 获取运行子进程过滤器

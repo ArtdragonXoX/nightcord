@@ -31,7 +31,7 @@ import (
 // @return workDir string 创建的临时工作目录路径
 // @return compileRes model.CompilationResult 编译结果
 // @return err error 执行过程中发生的错误
-func PrepareEnvironmentAndCompile(req model.SubmitRequest) (
+func PrepareEnvironmentAndCompile(ctx context.Context, req model.SubmitRequest) (
 	lang model.Language,
 	workDir string,
 	compileRes model.CompilationResult,
@@ -87,7 +87,7 @@ func PrepareEnvironmentAndCompile(req model.SubmitRequest) (
 	// 编译阶段：如果语言需要编译，执行编译命令并处理编译结果
 	if strings.TrimSpace(lang.CompileCmd) != "" {
 		compileCmdStr := fmt.Sprintf(lang.CompileCmd, "") // 假设 CompileCmd 可能为将来使用留有占位符
-		compileRes = CompileExecutor(compileCmdStr, workDir)
+		compileRes = CompileExecutor(ctx, compileCmdStr, workDir)
 		if !compileRes.Success {
 			// 如果编译失败，根据 compileRes.Message 设置错误
 			// 调用者将检查 compileRes.Success
@@ -157,12 +157,17 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(cont
 		exePipe.In.Writer.Close()
 
 		// 执行目标程序并获取结果
-		exeRes, err := ProcessExecutor(runExe)
+		pid, err := ProcessExecutor(runExe)
+
 		if err != nil {
 			res.Status = model.StatusIE.GetStatus()
 			res.Message = fmt.Sprintf("run executor failed: %v", err.Error())
 			return
 		}
+
+		var exeRes model.ExecutorResult
+
+		monitorProcess(ctx, pid, &exeRes)
 
 		// 关闭输出管道并读取结果
 		exePipe.Out.Writer.Close()
@@ -224,7 +229,13 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(cont
 //
 // 返回值:
 //   - model.CompilationResult: 包含编译时间、输出信息、状态等结果的结构体
-func CompileExecutor(compileCmd, dir string) (res model.CompilationResult) {
+func CompileExecutor(ctx context.Context, compileCmd, dir string) (res model.CompilationResult) {
+	select {
+	case <-ctx.Done():
+		res.Message = "compile timeout"
+		return
+	default:
+	}
 	// 创建执行器通信管道，用于捕获标准输出/错误
 	comPipe, err := model.NewExecutorPipe()
 	defer comPipe.Close()
@@ -254,10 +265,14 @@ func CompileExecutor(compileCmd, dir string) (res model.CompilationResult) {
 	}
 
 	// 执行编译命令并获取结果
-	exeRes, err := ProcessExecutor(executor)
+	pid, err := ProcessExecutor(executor)
 	if err != nil {
 		return
 	}
+
+	var exeRes model.ExecutorResult
+
+	monitorProcess(ctx, pid, &exeRes)
 
 	// 关闭错误管道写入端以结束读取
 	comPipe.Err.Writer.Close()
@@ -282,16 +297,50 @@ func CompileExecutor(compileCmd, dir string) (res model.CompilationResult) {
 	return
 }
 
+func monitorProcess(ctx context.Context, pid int, result *model.ExecutorResult) {
+	done := make(chan struct{})
+	var status syscall.WaitStatus
+	var rusage syscall.Rusage
+
+	// 启动goroutine等待进程结束
+	go func() {
+		_, _ = syscall.Wait4(pid, &status, 0, &rusage)
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		// 上下文被取消时发送SIGKILL
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		<-done // 确保进程状态被正确回收
+		result.ExitCode = -1
+		result.Signal = syscall.SIGKILL
+
+	case <-done:
+		// 正常处理结果
+		userTime := float64(rusage.Utime.Sec) + float64(rusage.Utime.Usec)/1e6
+		sysTime := float64(rusage.Stime.Sec) + float64(rusage.Stime.Usec)/1e6
+		result.Time = userTime + sysTime
+		result.Memory = uint(rusage.Maxrss)
+
+		if status.Exited() {
+			result.ExitCode = status.ExitStatus()
+		} else if status.Signaled() {
+			result.Signal = status.Signal()
+		}
+	}
+}
+
 // ProcessExecutor 执行运行器
-func ProcessExecutor(executor model.Executor) (model.ExecutorResult, error) {
+func ProcessExecutor(executor model.Executor) (int, error) {
 	cExe := ExecutorGo2C(executor)
 	defer C.free(unsafe.Pointer(cExe.Dir))
 	defer C.free(unsafe.Pointer(cExe.Command))
 	exitCode := C.Execute(cExe)
-	if int32(exitCode) != 0 {
-		return model.ExecutorResult{}, errors.New("executor error")
+	if int32(exitCode) == 0 {
+		return 0, errors.New("executor error")
 	}
-	return ResultC2GO(&cExe.Result), nil
+	return int(exitCode), nil
 }
 
 // ExecutorGo2C 将运行器的go结构体转换为c结构体
@@ -309,16 +358,6 @@ func ExecutorGo2C(executor model.Executor) *C.Executor {
 		StdoutFd: C.int(executor.Stdout.Fd()),
 		StderrFd: C.int(executor.Stderr.Fd()),
 		RunFlag:  C.int(utils.BoolToInt(executor.RunFlag)),
-	}
-}
-
-// ResultC2GO 将运行器结果c结构体转换为go结构体
-func ResultC2GO(result *C.Result) model.ExecutorResult {
-	return model.ExecutorResult{
-		ExitCode: int(result.ExitCode),
-		Memory:   uint(result.Memory),
-		Signal:   syscall.Signal(result.Signal),
-		Time:     float64(result.Time),
 	}
 }
 
