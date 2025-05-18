@@ -22,7 +22,27 @@ type RunJob struct {
 	WorkDir    string
 	Limiter    model.Limiter
 	RespChan   chan model.TestResult
-	Ctx        context.Context
+	ctx        context.Context
+	cancelFunc context.CancelFunc
+}
+
+func NewRunJob(testcase model.Testcase, runCommand, workDir string, limiter model.Limiter, parctx context.Context) *RunJob {
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if parctx == nil {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
+	return &RunJob{
+		Testcase:   testcase,
+		RunCommand: runCommand,
+		WorkDir:    workDir,
+		Limiter:    limiter,
+		RespChan:   make(chan model.TestResult),
+		ctx:        ctx,
+		cancelFunc: cancel,
+	}
 }
 
 // RunManager 管理运行任务的执行
@@ -170,7 +190,7 @@ func (rw *RunWorker) Start() {
 // Stop 停止 RunWorker
 // @Description 停止 RunWorker
 func (rw *RunWorker) Stop() {
-	close(rw.controlChan) // 关闭控制通道以通知 Run 协程停止
+	rw.controlChan <- struct{}{}
 }
 
 // GetTimeUsed 获取 RunWorker 已使用的时间
@@ -200,6 +220,9 @@ func (rw *RunWorker) Run() {
 			}
 			rw.handleRunJob(runJob)
 		case <-rw.controlChan:
+			if rw.CurrentJob != nil { // 停止当前任务
+				rw.CurrentJob.cancelFunc()
+			}
 			rw.Status = RunWorkerStatusStopped
 			return
 		case <-rw.jobFinish:
@@ -233,7 +256,7 @@ func (rw *RunWorker) handleRunJob(runJob *RunJob) {
 
 		// 检查上下文是否已取消
 		select {
-		case <-runJob.Ctx.Done():
+		case <-runJob.ctx.Done():
 			runJob.RespChan <- model.TestResult{
 				Status:  model.StatusIE.GetStatus(),
 				Message: "Run job was canceled",
@@ -243,7 +266,7 @@ func (rw *RunWorker) handleRunJob(runJob *RunJob) {
 		}
 
 		// 执行单个测试用例（传递上下文）
-		testRes := runExe(runJob.Ctx, runJob.Testcase) // 这里调用 executor.go 中的 GetRunExecutor 返回的函数
+		testRes := runExe(runJob.ctx, runJob.Testcase) // 这里调用 executor.go 中的 GetRunExecutor 返回的函数
 
 		runJob.RespChan <- testRes
 	}()

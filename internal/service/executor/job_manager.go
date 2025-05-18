@@ -376,22 +376,17 @@ func (jr *JobRunner) handleJob(job *Job) {
 		var mu sync.Mutex // 用于保护共享资源的互斥锁
 		wg.Add(numTestCases)
 
+		var limiter = model.Limiter{
+			CpuTime: job.Request.CpuTimeLimit,
+			Memory:  job.Request.MemoryLimit,
+		}
+
 		for i, tc := range job.Request.Testcase {
 			// 为每个测试用例启动一个 goroutine
 			go func(index int, currentTestcase model.Testcase) {
 				defer wg.Done() // goroutine 完成后减少等待组计数器
 
-				runJob := &RunJob{
-					Testcase:   currentTestcase,
-					RunCommand: lang.RunCmd, // lang 和 workDir 变量从外部作用域捕获
-					WorkDir:    workDir,
-					Limiter: model.Limiter{
-						CpuTime: job.Request.CpuTimeLimit,
-						Memory:  job.Request.MemoryLimit,
-					},
-					RespChan: make(chan model.TestResult, 1),
-					Ctx:      job.ctx,
-				}
+				runJob := NewRunJob(currentTestcase, lang.RunCmd, workDir, limiter, job.ctx)
 				// runManager 变量从外部作用域捕获
 				testCaseResult := runManager.SubmitRunJob(runJob)
 
