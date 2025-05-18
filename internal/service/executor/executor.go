@@ -320,20 +320,19 @@ func monitorProcess(ctx context.Context, pid int, result *model.ExecutorResult) 
 		<-done // 确保进程状态被正确回收
 		result.ExitCode = -1
 		result.Signal = syscall.SIGKILL
-
 	case <-done:
-		// 正常处理结果
-		userTime := float64(rusage.Utime.Sec) + float64(rusage.Utime.Usec)/1e6
-		sysTime := float64(rusage.Stime.Sec) + float64(rusage.Stime.Usec)/1e6
-		result.Time = userTime + sysTime
-		result.Memory = uint(rusage.Maxrss)
-
 		if status.Exited() {
 			result.ExitCode = status.ExitStatus()
 		} else if status.Signaled() {
 			result.Signal = status.Signal()
 		}
 	}
+	// 正常处理结果
+	userTime := float64(rusage.Utime.Sec) + float64(rusage.Utime.Usec)/1e6
+	sysTime := float64(rusage.Stime.Sec) + float64(rusage.Stime.Usec)/1e6
+	result.Time = userTime + sysTime
+	result.Memory = uint(rusage.Maxrss)
+
 }
 
 // ProcessExecutor 执行运行器
