@@ -24,3 +24,8 @@ func GetJobStatus(c *gin.Context) {
 	status := executor.GetJobManagerInstance().GetStatus()
 	c.JSON(http.StatusOK, status)
 }
+
+func GetRunManagerStatus(c *gin.Context) {
+	status := executor.GetRunManagerInstance().GetStatus()
+	c.JSON(http.StatusOK, status)
+}

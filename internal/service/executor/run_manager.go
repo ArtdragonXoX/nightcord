@@ -127,6 +127,23 @@ func (rm *RunManager) Stop() {
 	}
 }
 
+// GetStatus 获取运行管理器状态
+// @Description 获取运行管理器状态信息
+// @Return model.RunManagerStatus 包含队列信息和工作状态
+func (rm *RunManager) GetStatus() model.RunManagerStatus {
+	var statusList []model.RunWorkerStatus
+	for i := 0; i < rm.RunPoolNum; i++ {
+		if worker, ok := rm.RunWorkers[i]; ok {
+			statusList = append(statusList, worker.GetStatus())
+		}
+	}
+	return model.RunManagerStatus{
+		RunQueueNum:  rm.RunQueueNum,
+		RunPoolNum:   rm.RunPoolNum,
+		RunnerStatus: statusList,
+	}
+}
+
 // RunWorkerStatus 表示运行器的状态
 // @Description RunWorkerStatus 表示运行器的状态
 type RunWorkerStatus uint8
@@ -201,6 +218,17 @@ func (rw *RunWorker) GetTimeUsed() time.Duration {
 		return time.Since(rw.runStartTime)
 	}
 	return 0
+}
+
+// GetStatus 获取运行器状态信息
+// @Description 获取运行器状态信息
+// @Return model.RunWorkerStatus 包含ID、状态字符串和已用时间
+func (rw *RunWorker) GetStatus() model.RunWorkerStatus {
+	return model.RunWorkerStatus{
+		Id:       rw.Id,
+		Status:   rw.Status.String(),
+		TimeUsed: rw.GetTimeUsed().Seconds(),
+	}
 }
 
 // Run 是 RunWorker 的主循环，监听任务和控制信号
