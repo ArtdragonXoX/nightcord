@@ -4,6 +4,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
@@ -16,11 +17,12 @@ import (
 // @Description RunJob 包含单个测试用例、执行命令和资源限制等
 // @Description 由 RunManager 调度执行
 type RunJob struct {
-	Testcase   model.Testcase        // 单个测试用例
-	RunCommand string                // 实际执行的命令
-	WorkDir    string                // 工作目录
-	Limiter    model.Limiter         // 资源限制器
-	RespChan   chan model.TestResult // 用于返回单个测试用例的判题结果
+	Testcase   model.Testcase
+	RunCommand string
+	WorkDir    string
+	Limiter    model.Limiter
+	RespChan   chan model.TestResult
+	Ctx        context.Context
 }
 
 // RunManager 管理运行任务的执行
@@ -229,8 +231,19 @@ func (rw *RunWorker) handleRunJob(runJob *RunJob) {
 		// 获取执行器函数
 		runExe := GetRunExecutor(runJob.RunCommand, runJob.Limiter, runJob.WorkDir)
 
-		// 执行单个测试用例
-		testRes := runExe(runJob.Testcase) // 这里调用 executor.go 中的 GetRunExecutor 返回的函数
+		// 检查上下文是否已取消
+		select {
+		case <-runJob.Ctx.Done():
+			runJob.RespChan <- model.TestResult{
+				Status:  model.StatusIE.GetStatus(),
+				Message: "Run job was canceled",
+			}
+			return
+		default:
+		}
+
+		// 执行单个测试用例（传递上下文）
+		testRes := runExe(runJob.Ctx, runJob.Testcase) // 这里调用 executor.go 中的 GetRunExecutor 返回的函数
 
 		runJob.RespChan <- testRes
 	}()

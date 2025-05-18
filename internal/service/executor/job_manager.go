@@ -4,6 +4,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
@@ -24,16 +25,19 @@ const (
 
 // Job 表示评测任务，由任务管理器调度执行
 type Job struct {
-	Request   model.SubmitRequest
-	RespChan  chan model.JudgeResult
-	ChanClose bool
-	chanMux   sync.Mutex
+	Request    model.SubmitRequest
+	RespChan   chan model.JudgeResult
+	ctx        context.Context
+	cancelFunc context.CancelFunc
 }
 
 func NewJob(req model.SubmitRequest) *Job {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Job{
-		Request:  req,
-		RespChan: make(chan model.JudgeResult),
+		Request:    req,
+		RespChan:   make(chan model.JudgeResult),
+		ctx:        ctx,
+		cancelFunc: cancel,
 	}
 }
 
@@ -304,12 +308,15 @@ func (jr *JobRunner) handleJob(job *Job) {
 		var workDir string // 用于确保defer中可以访问到workDir
 
 		defer func() {
-			job.chanMux.Lock()
-			defer job.chanMux.Unlock()
-			if job.ChanClose {
+			// 检查上下文是否已取消
+			select {
+			case <-job.ctx.Done():
+				result.Status = model.StatusIE.GetStatus()
+				result.Message = "Job was canceled before execution"
 				return
+			default:
 			}
-			job.ChanClose = true
+
 			defer close(job.RespChan) // 确保关闭 RespChan
 			if workDir != "" {
 				os.RemoveAll(workDir) // 清理临时工作目录
@@ -383,6 +390,7 @@ func (jr *JobRunner) handleJob(job *Job) {
 						Memory:  job.Request.MemoryLimit,
 					},
 					RespChan: make(chan model.TestResult, 1),
+					Ctx:      job.ctx,
 				}
 				// runManager 变量从外部作用域捕获
 				testCaseResult := runManager.SubmitRunJob(runJob)
@@ -441,14 +449,10 @@ func (jr *JobRunner) handleJob(job *Job) {
 }
 
 func (jr *JobRunner) handleControl(cmd JobControlCommand) {
-	jr.Job.chanMux.Lock()
-	defer jr.Job.chanMux.Unlock()
-	if jr.Job.ChanClose {
-		return
-	}
-	jr.Job.ChanClose = true
+	// 取消任务上下文
+	jr.Job.cancelFunc()
 	jr.Job.RespChan <- model.JudgeResult{
-		Status:  model.StatusIE.GetStatus(), // Indicate an Internal Error
+		Status:  model.StatusIE.GetStatus(), // 内部错误状态
 		Message: "JobRunner is stopping or releasing.",
 	}
 	close(jr.Job.RespChan)

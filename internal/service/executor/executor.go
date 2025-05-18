@@ -10,6 +10,7 @@ package executor
 import "C"
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"nightcord-server/internal/conf"
@@ -112,7 +113,7 @@ func PrepareEnvironmentAndCompile(req model.SubmitRequest) (
 //
 // 返回值:
 //   - model.RunExe: 接收测试用例返回测试结果的函数类型
-func GetRunExecutor(command string, limiter model.Limiter, dir string) model.RunExe {
+func GetRunExecutor(command string, limiter model.Limiter, dir string) func(context.Context, model.Testcase) model.TestResult {
 	// 设置默认资源限制值（当未指定时使用配置中的默认值）
 	if limiter.CpuTime == 0 {
 		limiter.CpuTime = conf.Conf.Executor.CPUTimeLimit
@@ -130,7 +131,7 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) model.Run
 	}
 
 	// 返回实际执行测试用例的闭包函数
-	return func(testcase model.Testcase) (res model.TestResult) {
+	return func(ctx context.Context, testcase model.Testcase) (res model.TestResult) {
 		// 创建管道用于进程间通信
 		exePipe, err := model.NewExecutorPipe()
 		defer exePipe.Close()
