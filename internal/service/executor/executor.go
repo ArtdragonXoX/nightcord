@@ -200,6 +200,9 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(cont
 		case exeRes.ExitCode == 2:
 			res.Status = model.StatusIE.GetStatus()
 			res.Message = res.Stderr
+		case exeRes.ExitCode == -1:
+			res.Status = model.StatusIE.GetStatus()
+			res.Message = "context canceled"
 		case exeRes.Time > runExe.Limiter.CpuTime:
 			res.Status = model.StatusTLE.GetStatus()
 		case exeRes.Memory > runExe.Limiter.Memory*1024:
@@ -285,6 +288,8 @@ func CompileExecutor(ctx context.Context, compileCmd, dir string) (res model.Com
 		res.Message = "stderr pipe setup failed."
 	case exeRes.ExitCode == 2:
 		res.Message = stderr
+	case exeRes.ExitCode == -1:
+		res.Message = "context canceled"
 	case exeRes.ExitCode != 0:
 		res.Output = stderr
 	case stderr != "":
