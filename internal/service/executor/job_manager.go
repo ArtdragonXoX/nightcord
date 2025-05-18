@@ -316,7 +316,7 @@ func (jr *JobRunner) handleJob(job *Job) {
 				return
 			default:
 			}
-
+			defer job.cancelFunc()
 			defer close(job.RespChan) // 确保关闭 RespChan
 			if workDir != "" {
 				os.RemoveAll(workDir) // 清理临时工作目录

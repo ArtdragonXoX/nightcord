@@ -270,6 +270,7 @@ func (rw *RunWorker) handleRunJob(runJob *RunJob) {
 
 	go func() {
 		defer func() {
+			defer rw.CurrentJob.cancelFunc()
 			if r := recover(); r != nil {
 				runJob.RespChan <- model.TestResult{
 					Status:  model.StatusIE.GetStatus(),
