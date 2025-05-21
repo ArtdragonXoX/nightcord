@@ -52,6 +52,20 @@ func (p *Pipe) Read() (string, error) {
 	return buffer.String(), nil
 }
 
+// CopyFrom 将任意Reader接口的数据持续写入管道Writer
+// 参数：
+//
+//	src - 需要读取的输入源，可以是文件、网络连接、内存缓冲等
+//
+// 返回值：
+//
+//	int64 - 成功写入的字节数
+//	error - 写入过程中遇到的任何错误
+func (p *Pipe) CopyFrom(src io.Reader) (int64, error) {
+	// 使用io.Copy实现自动缓冲和数据拷贝
+	return io.Copy(p.Writer, src)
+}
+
 // NewPipe 创建一个读写管道
 func NewPipe() (*Pipe, error) {
 	reader, writer, err := os.Pipe()

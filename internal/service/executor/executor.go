@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
 	"nightcord-server/internal/service/language"
@@ -148,7 +149,7 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(cont
 		runExe.Stderr = exePipe.Err.Writer
 
 		// 将测试用例输入写入管道
-		_, err = exePipe.In.Write(testcase.Stdin)
+		_, err = exePipe.In.CopyFrom(testcase.Stdin)
 		if err != nil {
 			res.Status = model.StatusIE.GetStatus()
 			res.Message = fmt.Sprintf("write stdin pipe failed: %v", err.Error())
@@ -214,9 +215,20 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(cont
 			res.Status = model.StatusAC.GetStatus()
 		}
 
+		var expectedOutput string
+		if testcase.ExpectedOutput != nil {
+			expectedBytes, err := io.ReadAll(testcase.ExpectedOutput)
+			if err != nil {
+				res.Status = model.StatusIE.GetStatus()
+				res.Message = fmt.Sprintf("读取预期输出失败: %v", err)
+				return
+			}
+			expectedOutput = string(expectedBytes)
+		}
+
 		// 验证输出结果是否符合预期
-		if testcase.ExpectedOutput != "" && res.Status.Id == model.StatusAC {
-			if !utils.StringsEqualIgnoreFinalNewline(res.Stdout, testcase.ExpectedOutput) {
+		if expectedOutput != "" && res.Status.Id == model.StatusAC {
+			if !utils.StringsEqualIgnoreFinalNewline(res.Stdout, expectedOutput) {
 				res.Status = model.StatusWA.GetStatus()
 			}
 		}

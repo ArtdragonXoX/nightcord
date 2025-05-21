@@ -5,6 +5,7 @@ package model
 
 import (
 	"errors"
+	"io"
 	"os"
 	"syscall"
 )
@@ -30,8 +31,8 @@ type RunJob struct {
 
 // Testcase 表示测试数据
 type Testcase struct {
-	Stdin          string `json:"stdin,omitempty"`
-	ExpectedOutput string `json:"expected_output,omitempty"`
+	Stdin          io.Reader
+	ExpectedOutput io.Reader
 }
 
 type TestResultWithIndex struct {
@@ -39,16 +40,21 @@ type TestResultWithIndex struct {
 	TestResult TestResult
 }
 
+type TestcaseReq struct {
+	Stdin          string `json:"stdin,omitempty"`
+	ExpectedOutput string `json:"expected_output,omitempty"`
+}
+
 // SubmitRequest 表示提交评测时的请求体
 type SubmitRequest struct {
-	SourceCode     string       `json:"source_code"`
-	Stdin          string       `json:"stdin,omitempty"`
-	ExpectedOutput string       `json:"expected_output,omitempty"`
-	CpuTimeLimit   float64      `json:"cpu_time_limit,omitempty"`
-	MemoryLimit    uint         `json:"memory_limit,omitempty"`
-	LanguageID     int          `json:"language_id"`
-	Testcase       []Testcase   `json:"test_case,omitempty"`
-	TestcaseType   TestcaseType `json:"test_case_type,omitempty"`
+	SourceCode     string        `json:"source_code"`
+	Stdin          string        `json:"stdin,omitempty"`
+	ExpectedOutput string        `json:"expected_output,omitempty"`
+	CpuTimeLimit   float64       `json:"cpu_time_limit,omitempty"`
+	MemoryLimit    uint          `json:"memory_limit,omitempty"`
+	LanguageID     int           `json:"language_id"`
+	Testcase       []TestcaseReq `json:"test_case,omitempty"`
+	TestcaseType   TestcaseType  `json:"test_case_type,omitempty"`
 }
 
 // CompilationResult 表示编译结果

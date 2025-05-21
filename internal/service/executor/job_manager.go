@@ -9,6 +9,7 @@ import (
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -383,10 +384,19 @@ func (jr *JobRunner) handleJob(job *Job) {
 
 		for i, tc := range job.Request.Testcase {
 			// 为每个测试用例启动一个 goroutine
-			go func(index int, currentTestcase model.Testcase) {
+			go func(index int, currentTestcase model.TestcaseReq) {
 				defer wg.Done() // goroutine 完成后减少等待组计数器
 
-				runJob := NewRunJob(currentTestcase, lang.RunCmd, workDir, limiter, job.ctx)
+				var testcase model.Testcase
+
+				if job.Request.TestcaseType <= model.MultipleTest {
+					testcase = model.Testcase{
+						Stdin:          strings.NewReader(currentTestcase.Stdin),
+						ExpectedOutput: strings.NewReader(currentTestcase.ExpectedOutput),
+					}
+				}
+
+				runJob := NewRunJob(testcase, lang.RunCmd, workDir, limiter, job.ctx)
 				// runManager 变量从外部作用域捕获
 				testCaseResult := runManager.SubmitRunJob(runJob)
 
