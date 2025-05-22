@@ -108,7 +108,7 @@ func PrepareEnvironmentAndCompile(ctx context.Context, req model.SubmitRequest) 
 		if !compileRes.Success {
 			// 如果编译失败，根据 compileRes.Message 设置错误
 			// 调用者将检查 compileRes.Success
-			if exeRes.Message != "" {
+			if compileRes.Message != "" {
 				err = errors.New(compileRes.Message) // 将编译消息作为错误传播
 			} else {
 				err = errors.New("compilation failed without specific message") // 通用编译错误
