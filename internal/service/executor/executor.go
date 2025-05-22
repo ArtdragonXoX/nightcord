@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
 	"nightcord-server/internal/service/language"
@@ -87,7 +88,23 @@ func PrepareEnvironmentAndCompile(ctx context.Context, req model.SubmitRequest) 
 	// 编译阶段：如果语言需要编译，执行编译命令并处理编译结果
 	if strings.TrimSpace(lang.CompileCmd) != "" {
 		compileCmdStr := fmt.Sprintf(lang.CompileCmd, "") // 假设 CompileCmd 可能为将来使用留有占位符
-		compileRes = CompileExecutor(ctx, compileCmdStr, workDir)
+		limiter := model.Limiter{
+			CpuTime: conf.Conf.Executor.CompileTimeout,
+			Memory:  uint(conf.Conf.Executor.CompileMemory),
+		}
+		compileRunExe := GetRunExecutor(compileCmdStr, limiter, workDir, false)
+
+		runJob := NewRunJob(compileRunExe, ctx)
+
+		exeRes := GetRunManagerInstance().SubmitRunJob(runJob)
+
+		compileRes = model.CompilationResult{
+			Success:     exeRes.Status.Id == model.StatusAC, // 根据编译结果设置编译成功状态
+			Message:     exeRes.Message,                     // 编译消息
+			Output:      exeRes.Stdout,
+			CompileTime: exeRes.Time,
+		}
+
 		if !compileRes.Success {
 			// 如果编译失败，根据 compileRes.Message 设置错误
 			// 调用者将检查 compileRes.Success
@@ -113,7 +130,7 @@ func PrepareEnvironmentAndCompile(ctx context.Context, req model.SubmitRequest) 
 //
 // 返回值:
 //   - model.RunExe: 接收测试用例返回测试结果的函数类型
-func GetRunExecutor(command string, limiter model.Limiter, dir string) func(context.Context, model.Testcase) model.TestResult {
+func GetRunExecutor(command string, limiter model.Limiter, dir string, runFlag bool, stdin ...io.Reader) func(context.Context) model.RunResult {
 	// 设置默认资源限制值（当未指定时使用配置中的默认值）
 	if limiter.CpuTime == 0 {
 		limiter.CpuTime = conf.Conf.Executor.CPUTimeLimit
@@ -127,11 +144,11 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(cont
 		Command: command,
 		Dir:     dir,
 		Limiter: limiter,
-		RunFlag: true,
+		RunFlag: runFlag,
 	}
 
 	// 返回实际执行测试用例的闭包函数
-	return func(ctx context.Context, testcase model.Testcase) (res model.TestResult) {
+	return func(ctx context.Context) (res model.RunResult) {
 		// 创建管道用于进程间通信
 		exePipe, err := model.NewExecutorPipe()
 		defer exePipe.Close()
@@ -148,7 +165,9 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(cont
 		runExe.Stderr = exePipe.Err.Writer
 
 		// 将测试用例输入写入管道
-		_, err = exePipe.In.Write(testcase.Stdin)
+		if len(stdin) > 0 {
+			_, err = exePipe.In.CopyFrom(stdin[0])
+		}
 		if err != nil {
 			res.Status = model.StatusIE.GetStatus()
 			res.Message = fmt.Sprintf("write stdin pipe failed: %v", err.Error())
@@ -214,92 +233,8 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string) func(cont
 			res.Status = model.StatusAC.GetStatus()
 		}
 
-		// 验证输出结果是否符合预期
-		if testcase.ExpectedOutput != "" && res.Status.Id == model.StatusAC {
-			if !utils.StringsEqualIgnoreFinalNewline(res.Stdout, testcase.ExpectedOutput) {
-				res.Status = model.StatusWA.GetStatus()
-			}
-		}
-
 		return
 	}
-}
-
-// CompileExecutor 执行编译命令并返回编译结果
-// 参数:
-//   - compileCmd: 字符串类型，需要执行的编译命令
-//   - dir: 字符串类型，执行命令的工作目录
-//
-// 返回值:
-//   - model.CompilationResult: 包含编译时间、输出信息、状态等结果的结构体
-func CompileExecutor(ctx context.Context, compileCmd, dir string) (res model.CompilationResult) {
-	select {
-	case <-ctx.Done():
-		res.Message = "compile timeout"
-		return
-	default:
-	}
-	// 创建执行器通信管道，用于捕获标准输出/错误
-	comPipe, err := model.NewExecutorPipe()
-	defer comPipe.Close()
-	if err != nil {
-		res.Message = err.Error()
-		return
-	}
-
-	// 检查编译命令有效性
-	if strings.TrimSpace(compileCmd) == "" {
-		res.Message = "compile command is empty"
-		return
-	}
-
-	// 构建执行器配置
-	executor := model.Executor{
-		Command: compileCmd,
-		Dir:     dir,
-		Limiter: model.Limiter{
-			CpuTime: conf.Conf.Executor.CompileTimeout,
-			Memory:  uint(conf.Conf.Executor.CompileMemory),
-		},
-		Stdin:   comPipe.In.Reader,
-		Stdout:  comPipe.Out.Writer,
-		Stderr:  comPipe.Err.Writer,
-		RunFlag: false,
-	}
-
-	// 执行编译命令并获取结果
-	pid, err := ProcessExecutor(executor)
-	if err != nil {
-		return
-	}
-
-	var exeRes model.ExecutorResult
-
-	monitorProcess(ctx, pid, &exeRes)
-
-	// 关闭错误管道写入端以结束读取
-	comPipe.Err.Writer.Close()
-	stderr, err := comPipe.Err.Read()
-
-	// 设置编译时间并处理不同退出状态
-	res.CompileTime = exeRes.Time
-	switch {
-	case exeRes.ExitCode == 3:
-		res.Message = "stderr pipe setup failed."
-	case exeRes.ExitCode == 2:
-		res.Message = stderr
-	case exeRes.ExitCode == -1:
-		res.Message = "context canceled"
-	case exeRes.ExitCode != 0:
-		res.Output = stderr
-	case stderr != "":
-		res.Output = stderr
-	case exeRes.Signal != 0:
-		res.Output = SignalMessage(exeRes.Signal)
-	default:
-		res.Success = true
-	}
-	return
 }
 
 func monitorProcess(ctx context.Context, pid int, result *model.ExecutorResult) {

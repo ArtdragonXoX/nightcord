@@ -6,9 +6,12 @@ package executor
 import (
 	"context"
 	"fmt"
+	"io"
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
+	"nightcord-server/utils"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -383,12 +386,41 @@ func (jr *JobRunner) handleJob(job *Job) {
 
 		for i, tc := range job.Request.Testcase {
 			// 为每个测试用例启动一个 goroutine
-			go func(index int, currentTestcase model.Testcase) {
+			go func(index int, currentTestcase model.TestcaseReq) {
 				defer wg.Done() // goroutine 完成后减少等待组计数器
 
-				runJob := NewRunJob(currentTestcase, lang.RunCmd, workDir, limiter, job.ctx)
+				var testcase model.Testcase
+
+				if job.Request.TestcaseType <= model.MultipleTest {
+					testcase = model.Testcase{
+						Stdin:          strings.NewReader(currentTestcase.Stdin),
+						ExpectedOutput: strings.NewReader(currentTestcase.ExpectedOutput),
+					}
+				}
+
+				runExe := GetRunExecutor(lang.RunCmd, limiter, workDir, true, testcase.Stdin)
+
+				runJob := NewRunJob(runExe, job.ctx)
 				// runManager 变量从外部作用域捕获
 				testCaseResult := runManager.SubmitRunJob(runJob)
+
+				if testCaseResult.Status.Id == model.StatusAC && testcase.ExpectedOutput != nil {
+					var expectedOutput string
+					expectedBytes, err := io.ReadAll(testcase.ExpectedOutput)
+					if err != nil {
+						testCaseResult.Status = model.StatusIE.GetStatus()
+						testCaseResult.Message = fmt.Sprintf("读取预期输出失败: %v", err)
+						return
+					}
+					expectedOutput = string(expectedBytes)
+
+					// 验证输出结果是否符合预期
+					if expectedOutput != "" {
+						if !utils.StringsEqualIgnoreFinalNewline(testCaseResult.Stdout, expectedOutput) {
+							testCaseResult.Status = model.StatusWA.GetStatus()
+						}
+					}
+				}
 
 				mu.Lock() // 获取互斥锁以安全地更新共享资源
 				result.TestResult[index] = testCaseResult
