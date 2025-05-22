@@ -17,16 +17,13 @@ import (
 // @Description RunJob 包含单个测试用例、执行命令和资源限制等
 // @Description 由 RunManager 调度执行
 type RunJob struct {
-	Testcase   model.Testcase
-	RunCommand string
-	WorkDir    string
-	Limiter    model.Limiter
+	runExe     model.RunExe
 	RespChan   chan model.TestResult
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 }
 
-func NewRunJob(testcase model.Testcase, runCommand, workDir string, limiter model.Limiter, parctx context.Context) *RunJob {
+func NewRunJob(runExe model.RunExe, parctx context.Context) *RunJob {
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if parctx == nil {
@@ -35,10 +32,7 @@ func NewRunJob(testcase model.Testcase, runCommand, workDir string, limiter mode
 		ctx, cancel = context.WithCancel(context.Background())
 	}
 	return &RunJob{
-		Testcase:   testcase,
-		RunCommand: runCommand,
-		WorkDir:    workDir,
-		Limiter:    limiter,
+		runExe:     runExe,
 		RespChan:   make(chan model.TestResult),
 		ctx:        ctx,
 		cancelFunc: cancel,
@@ -280,9 +274,6 @@ func (rw *RunWorker) handleRunJob(runJob *RunJob) {
 			rw.jobFinish <- struct{}{}
 		}()
 
-		// 获取执行器函数
-		runExe := GetRunExecutor(runJob.RunCommand, runJob.Limiter, runJob.WorkDir)
-
 		// 检查上下文是否已取消
 		select {
 		case <-runJob.ctx.Done():
@@ -295,7 +286,7 @@ func (rw *RunWorker) handleRunJob(runJob *RunJob) {
 		}
 
 		// 执行单个测试用例（传递上下文）
-		testRes := runExe(runJob.ctx, runJob.Testcase) // 这里调用 executor.go 中的 GetRunExecutor 返回的函数
+		testRes := rw.CurrentJob.runExe(runJob.ctx) // 这里调用 executor.go 中的 GetRunExecutor 返回的函数
 
 		runJob.RespChan <- testRes
 	}()

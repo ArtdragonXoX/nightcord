@@ -4,6 +4,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -11,7 +12,7 @@ import (
 )
 
 // 代码运行器闭包，内含一个 Executor 结构体模版，可以以这个模版为基础运行不同的Testcase
-type RunExe func(testcase Testcase) TestResult
+type RunExe func(context.Context) RunResult
 
 // TestcaseType 表示测试数据类型
 type TestcaseType int
@@ -64,6 +65,8 @@ type CompilationResult struct {
 	CompileTime float64 `json:"compile_time"` // 编译耗时（秒）
 	Message     string  `json:"message"`
 }
+
+type RunResult = TestResult
 
 // TestResult 表示单个测试结果
 type TestResult struct {
