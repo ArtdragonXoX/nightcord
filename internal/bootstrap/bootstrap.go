@@ -5,5 +5,6 @@ package bootstrap
 
 func Init() {
 	initConf()
+	initStorage()
 	initServer()
 }
