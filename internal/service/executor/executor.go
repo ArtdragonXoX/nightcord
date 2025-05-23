@@ -122,14 +122,21 @@ func PrepareEnvironmentAndCompile(ctx context.Context, req model.SubmitRequest) 
 	return lang, workDir, compileRes, nil
 }
 
-// GetRunExecutor 生成并返回一个执行器运行函数，用于处理测试用例并返回测试结果
+// GetRunExecutor 创建并返回一个执行命令的闭包函数，该闭包会：
+//   - 根据配置创建带资源限制的执行器
+//   - 处理标准输入输出管道
+//   - 执行命令并监控资源使用
+//   - 根据执行结果设置对应的状态码和消息
+//
 // 参数:
-//   - command: 需要执行的命令字符串
-//   - limiter: 资源限制器，包含CPU时间和内存限制（单位：KB）
-//   - dir: 执行命令的工作目录
+//   - command: 需要执行的完整命令字符串
+//   - limiter: 资源限制配置（CPU时间单位：秒，内存单位：KB）
+//   - dir: 命令执行的工作目录
+//   - runFlag: 标识是否运行模式（影响CGO执行器行为）
+//   - stdin: 可变参数，可传递单个io.Reader作为标准输入
 //
 // 返回值:
-//   - model.RunExe: 接收测试用例返回测试结果的函数类型
+//   - func(context.Context) model.RunResult: 接收上下文返回执行结果的闭包函数
 func GetRunExecutor(command string, limiter model.Limiter, dir string, runFlag bool, stdin ...io.Reader) func(context.Context) model.RunResult {
 	// 设置默认资源限制值（当未指定时使用配置中的默认值）
 	if limiter.CpuTime == 0 {
