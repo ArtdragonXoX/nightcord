@@ -7,11 +7,13 @@ import (
 type Config struct {
 	Server   ServerConf   `yaml:"server" json:"server"`
 	Executor ExecutorConf `yaml:"executor" json:"executor"`
+	Storage  StorageConf  `yaml:"storage" json:"storage"`
 }
 
 func (c *Config) Default() {
 	c.Server.Default()
 	c.Executor.Default()
+	c.Storage.Default()
 }
 
 func (c *Config) ReadYaml() error {
