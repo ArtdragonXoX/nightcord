@@ -312,7 +312,6 @@ func (jr *JobRunner) handleJob(job *Job) {
 		var workDir string // 用于确保defer中可以访问到workDir
 
 		defer func() {
-			job.cancelFunc()
 			defer close(job.RespChan) // 确保关闭 RespChan
 			if workDir != "" {
 				os.RemoveAll(workDir) // 清理临时工作目录
@@ -326,6 +325,7 @@ func (jr *JobRunner) handleJob(job *Job) {
 				return
 			default:
 			}
+			job.cancelFunc()
 			if r := recover(); r != nil {
 				// 记录panic错误
 				job.RespChan <- model.JudgeResult{
