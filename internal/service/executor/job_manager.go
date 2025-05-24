@@ -9,6 +9,7 @@ import (
 	"io"
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
+	"nightcord-server/internal/service/storage"
 	"nightcord-server/utils"
 	"os"
 	"strings"
@@ -395,6 +396,48 @@ func (jr *JobRunner) handleJob(job *Job) {
 					testcase = model.Testcase{
 						Stdin:          strings.NewReader(currentTestcase.Stdin),
 						ExpectedOutput: strings.NewReader(currentTestcase.ExpectedOutput),
+					}
+				} else if job.Request.TestcaseType == model.FileTest {
+					// 从storage读取测试数据文件
+					storageEngine := storage.GetStorageEngineInstance()
+
+					// 读取输入文件
+					var stdinReader io.Reader
+					if currentTestcase.Stdin != "" {
+						inputFile, err := storageEngine.ReadFile(currentTestcase.Stdin)
+						if err != nil {
+							mu.Lock()
+							result.TestResult[index] = model.TestResult{
+								Status:  model.StatusIE.GetStatus(),
+								Message: fmt.Sprintf("读取输入文件失败: %v", err),
+							}
+							mu.Unlock()
+							return
+						}
+						stdinReader = inputFile
+						defer inputFile.Close()
+					}
+
+					// 读取期望输出文件
+					var expectedOutputReader io.Reader
+					if currentTestcase.ExpectedOutput != "" {
+						outputFile, err := storageEngine.ReadFile(currentTestcase.ExpectedOutput)
+						if err != nil {
+							mu.Lock()
+							result.TestResult[index] = model.TestResult{
+								Status:  model.StatusIE.GetStatus(),
+								Message: fmt.Sprintf("读取期望输出文件失败: %v", err),
+							}
+							mu.Unlock()
+							return
+						}
+						expectedOutputReader = outputFile
+						defer outputFile.Close()
+					}
+
+					testcase = model.Testcase{
+						Stdin:          stdinReader,
+						ExpectedOutput: expectedOutputReader,
 					}
 				}
 
