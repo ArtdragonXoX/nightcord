@@ -312,18 +312,19 @@ func (jr *JobRunner) handleJob(job *Job) {
 		var workDir string // 用于确保defer中可以访问到workDir
 
 		defer func() {
+			job.cancelFunc()
+			defer close(job.RespChan) // 确保关闭 RespChan
+			if workDir != "" {
+				os.RemoveAll(workDir) // 清理临时工作目录
+			}
 			// 检查上下文是否已取消
 			select {
 			case <-job.ctx.Done():
 				result.Status = model.StatusIE.GetStatus()
 				result.Message = "Job was canceled before execution"
+				job.RespChan <- result
 				return
 			default:
-			}
-			job.cancelFunc()
-			defer close(job.RespChan) // 确保关闭 RespChan
-			if workDir != "" {
-				os.RemoveAll(workDir) // 清理临时工作目录
 			}
 			if r := recover(); r != nil {
 				// 记录panic错误

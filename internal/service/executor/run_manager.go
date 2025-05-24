@@ -27,9 +27,9 @@ func NewRunJob(runExe model.RunExe, parctx context.Context) *RunJob {
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if parctx == nil {
-		ctx, cancel = context.WithCancel(ctx)
-	} else {
 		ctx, cancel = context.WithCancel(context.Background())
+	} else {
+		ctx, cancel = context.WithCancel(parctx)
 	}
 	return &RunJob{
 		runExe:     runExe,
