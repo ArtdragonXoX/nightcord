@@ -309,6 +309,7 @@ func (jr *JobRunner) handleJob(job *Job) {
 	jr.Job = job
 	go func() {
 		var result model.JudgeResult
+		result.Status = model.StatusAC.GetStatus()
 		var workDir string // 用于确保defer中可以访问到workDir
 
 		defer func() {
@@ -364,9 +365,6 @@ func (jr *JobRunner) handleJob(job *Job) {
 		runManager := GetRunManagerInstance()
 		numTestCases := len(job.Request.Testcase)
 		result.TestResult = make([]model.TestResult, numTestCases)
-		var overallStatus model.Status // 用于跟踪整体评测状态
-		var maxTime float64
-		var maxMemory uint
 
 		if numTestCases == 0 {
 			result.Status = model.StatusIE.GetStatus()
@@ -374,11 +372,8 @@ func (jr *JobRunner) handleJob(job *Job) {
 			return // 没有测试用例，提前返回
 		}
 
-		// 初始化 overallStatus 为 Accepted，如果后续有任何非AC状态，则更新
-		overallStatus = model.StatusAC.GetStatus()
-
+		resultChan := make(chan model.TestResultWithIndex, numTestCases)
 		var wg sync.WaitGroup
-		var mu sync.Mutex // 用于保护共享资源的互斥锁
 		wg.Add(numTestCases)
 
 		var limiter = model.Limiter{
@@ -390,7 +385,7 @@ func (jr *JobRunner) handleJob(job *Job) {
 			// 为每个测试用例启动一个 goroutine
 			go func(index int, currentTestcase model.TestcaseReq) {
 				defer wg.Done() // goroutine 完成后减少等待组计数器
-
+				var res model.TestResultWithIndex
 				var testcase model.Testcase
 
 				if job.Request.TestcaseType <= model.MultipleTest {
@@ -407,12 +402,14 @@ func (jr *JobRunner) handleJob(job *Job) {
 					if currentTestcase.Stdin != "" {
 						inputFile, err := storageEngine.ReadFile(currentTestcase.Stdin)
 						if err != nil {
-							mu.Lock()
-							result.TestResult[index] = model.TestResult{
-								Status:  model.StatusIE.GetStatus(),
-								Message: fmt.Sprintf("读取输入文件失败: %v", err),
+							res = model.TestResultWithIndex{
+								Index: index,
+								TestResult: model.TestResult{
+									Status:  model.StatusIE.GetStatus(),
+									Message: fmt.Sprintf("读取输入文件失败: %v", err),
+								},
 							}
-							mu.Unlock()
+							resultChan <- res
 							return
 						}
 						stdinReader = inputFile
@@ -424,12 +421,14 @@ func (jr *JobRunner) handleJob(job *Job) {
 					if currentTestcase.ExpectedOutput != "" {
 						outputFile, err := storageEngine.ReadFile(currentTestcase.ExpectedOutput)
 						if err != nil {
-							mu.Lock()
-							result.TestResult[index] = model.TestResult{
-								Status:  model.StatusIE.GetStatus(),
-								Message: fmt.Sprintf("读取期望输出文件失败: %v", err),
+							res = model.TestResultWithIndex{
+								Index: index,
+								TestResult: model.TestResult{
+									Status:  model.StatusIE.GetStatus(),
+									Message: fmt.Sprintf("读取期望输出文件失败: %v", err),
+								},
 							}
-							mu.Unlock()
+							resultChan <- res
 							return
 						}
 						expectedOutputReader = outputFile
@@ -465,53 +464,29 @@ func (jr *JobRunner) handleJob(job *Job) {
 						}
 					}
 				}
-
-				mu.Lock() // 获取互斥锁以安全地更新共享资源
-				result.TestResult[index] = testCaseResult
-
-				// 更新最大时间和内存
-				if testCaseResult.Time > maxTime {
-					maxTime = testCaseResult.Time
+				res = model.TestResultWithIndex{
+					Index:      index,
+					TestResult: testCaseResult,
 				}
-				if testCaseResult.Memory > maxMemory {
-					maxMemory = testCaseResult.Memory
-				}
-
-				// 更新整体状态，取所有测试用例中优先级最高（ID值最大）的状态
-				// 如果当前测试用例的状态优先级高于 overallStatus，则更新 overallStatus
-				if testCaseResult.Status.Id > overallStatus.Id {
-					overallStatus = testCaseResult.Status
-				}
-				mu.Unlock() // 释放互斥锁
+				resultChan <- res
 			}(i, tc) // 将循环变量作为参数传递给 goroutine
 		}
 		wg.Wait() // 等待所有测试用例的 goroutine 完成
+		close(resultChan)
 
-		result.Status = overallStatus
-		result.MaxTime = maxTime
-		result.MaxMemory = maxMemory
-
-		// 如果所有测试用例都通过 (overallStatus 仍然是 AC)，且有测试用例
-		// 再次确认所有测试用例都是AC，因为 overallStatus 可能因为某个严重错误（如IE）而变大，但并非所有测试用例都失败
-		if overallStatus.Id == model.StatusAC.GetStatus().Id && numTestCases > 0 {
-			allAC := true
-			for _, tr := range result.TestResult {
-				if tr.Status.Id != model.StatusAC.GetStatus().Id {
-					allAC = false
-					// 如果发现非AC，则最终状态应该是第一个非AC的状态或者优先级最高的那个
-					// 上面的循环已经保证了overallStatus是优先级最高的，所以这里不需要再次修改overallStatus
-					break
-				}
+		// 从通道中收集测试结果
+		for res := range resultChan {
+			result.TestResult[res.Index] = res.TestResult
+			if result.Status.Id < res.TestResult.Status.Id {
+				result.Status = res.TestResult.Status
 			}
-			if allAC {
-				result.Status = model.StatusAC.GetStatus()
-			} // else: overallStatus 已经是正确的非AC状态了
-		} else if overallStatus.Id != model.StatusAC.GetStatus().Id {
-			// 如果 overallStatus 不是 AC，它已经是所有测试用例中优先级最高的错误状态了
-			// 不需要额外处理，result.Status 已经被正确设置
-		} else if numTestCases > 0 && overallStatus.Id == 0 { // 理论上不会到这里，因为 overallStatus 初始化为 AC
-			result.Status = model.StatusIE.GetStatus()
-			result.Message = "Unknown error during testcase aggregation."
+			if result.MaxTime < res.TestResult.Time {
+				result.MaxTime = res.TestResult.Time
+			}
+			if result.MaxMemory < res.TestResult.Memory {
+				result.MaxMemory = res.TestResult.Memory
+			}
+			result.Message = res.TestResult.Message
 		}
 
 		// workDir 的清理已在 defer 中处理
