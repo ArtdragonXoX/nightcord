@@ -18,6 +18,8 @@ func SignalStatus(s syscall.Signal) model.StatusId {
 		return model.StatusRESIGFPE
 	case syscall.SIGABRT:
 		return model.StatusRESIGABRT
+	case syscall.SIGXCPU:
+		return model.StatusTLE
 	default:
 		return model.StatusRE
 	}
@@ -35,6 +37,8 @@ func SignalMessage(s syscall.Signal) string {
 		return "程序异常终止"
 	case syscall.SIGSYS:
 		return "系统调用错误"
+	case syscall.SIGXCPU:
+		return "时间限制超出"
 	default:
 		return "未知错误"
 	}

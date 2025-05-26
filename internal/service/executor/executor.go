@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"nightcord-server/internal/conf"
 	"nightcord-server/internal/model"
 	"nightcord-server/internal/service/language"
@@ -215,8 +216,8 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string, runFlag b
 		}
 
 		// 设置执行时间和内存消耗
-		res.Time = exeRes.Time
 		res.Memory = exeRes.Memory
+		res.Time = math.Round(exeRes.Time*1000) / 1000
 
 		// 根据退出码和信号判断执行状态
 		switch {
@@ -229,9 +230,9 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string, runFlag b
 		case exeRes.ExitCode == -1:
 			res.Status = model.StatusIE.GetStatus()
 			res.Message = "context canceled"
-		case exeRes.Time > runExe.Limiter.CpuTime:
+		case res.Time >= runExe.Limiter.CpuTime:
 			res.Status = model.StatusTLE.GetStatus()
-		case exeRes.Memory > runExe.Limiter.Memory*1024:
+		case res.Memory > runExe.Limiter.Memory*1024:
 			res.Status = model.StatusRESIGSEGV.GetStatus()
 		case exeRes.Signal != 0:
 			res.Status = SignalStatus(exeRes.Signal).GetStatus()
@@ -239,7 +240,6 @@ func GetRunExecutor(command string, limiter model.Limiter, dir string, runFlag b
 		default:
 			res.Status = model.StatusAC.GetStatus()
 		}
-
 		return
 	}
 }
@@ -265,7 +265,8 @@ func monitorProcess(ctx context.Context, pid int, result *model.ExecutorResult) 
 	case <-done:
 		if status.Exited() {
 			result.ExitCode = status.ExitStatus()
-		} else if status.Signaled() {
+		}
+		if status.Signaled() {
 			result.Signal = status.Signal()
 		}
 	}
@@ -274,7 +275,6 @@ func monitorProcess(ctx context.Context, pid int, result *model.ExecutorResult) 
 	sysTime := float64(rusage.Stime.Sec) + float64(rusage.Stime.Usec)/1e6
 	result.Time = userTime + sysTime
 	result.Memory = uint(rusage.Maxrss)
-
 }
 
 // ProcessExecutor 执行运行器
